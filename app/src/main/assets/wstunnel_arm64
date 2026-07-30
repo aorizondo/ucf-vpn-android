@@ -1,0 +1,6 @@
+PLACEHOLDER: This is a placeholder for the wstunnel ARM64 binary.
+
+Run ./scripts/download_wstunnel.sh to download the real binary from
+https://github.com/erebe/wstunnel/releases (version 10.5.1).
+
+The real binary will be a statically-linked linux-arm64 ELF executable.
