@@ -168,7 +168,7 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ### Wave 1 — Fundación
 
-- [ ] 1. **Repositorio + Gradle + GitHub Actions scaffold**
+- [x] 1. **Repositorio + Gradle + GitHub Actions scaffold**
 
   **Qué hacer**:
   - Crear repositorio git local y remoto (GitHub: `ucf-vpn-android`)
@@ -221,7 +221,7 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ---
 
-- [ ] 2. **Módulo SSTP Protocol (traducción Python → Kotlin)**
+- [x] 2. **Módulo SSTP Protocol (traducción Python → Kotlin)**
 
   **Qué hacer**:
   - Traducir `sstp/protocol.py` a Kotlin (`SstpProtocol.kt`)
@@ -269,7 +269,7 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ---
 
-- [ ] 3. **Módulo PPP Handler (framing HDLC + lwIP/PPP)**
+- [x] 3. **Módulo PPP Handler (framing HDLC + lwIP/PPP)**
 
   **Qué hacer**:
   - Traducir `sstp/ppp_handler.py` a Kotlin (`PppHandler.kt`)
@@ -324,7 +324,7 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ---
 
-- [ ] 4. **WireGuard config parser + almacenamiento seguro**
+- [x] 4. **WireGuard config parser + almacenamiento seguro**
 
   **Qué hacer**:
   - Implementar parser de configuración WireGuard (formato wg-quick)
@@ -388,7 +388,7 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ---
 
-- [ ] 5. **Diseño UI básico (Jetpack Compose)**
+- [x] 5. **Diseño UI básico (Jetpack Compose)**
 
   **Qué hacer**:
   - Crear estructura de pantallas con Jetpack Compose:

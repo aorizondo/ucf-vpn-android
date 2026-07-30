@@ -8,7 +8,7 @@
       "plan_name": "ucf-vpn-android",
       "status": "active",
       "started_at": "2026-07-30T04:31:04.373Z",
-      "updated_at": "2026-07-30T04:31:04.373Z",
+      "updated_at": "2026-07-30T06:09:14.387Z",
       "session_ids": [
         "ses_05086ee36ffeDt4VWo3cRre02q"
       ],
@@ -16,13 +16,40 @@
         "ses_05086ee36ffeDt4VWo3cRre02q": "direct"
       },
       "agent": "atlas",
-      "task_sessions": {}
+      "task_sessions": {
+        "todo:1": {
+          "task_key": "todo:1",
+          "task_label": "1",
+          "task_title": "**Repositorio + Gradle + GitHub Actions scaffold**",
+          "session_id": "ses_04eb1ccb7ffe0c1LShvDn1FPay",
+          "agent": "Sisyphus-Junior",
+          "category": "quick",
+          "updated_at": "2026-07-30T04:41:41.538Z",
+          "started_at": "2026-07-30T04:40:09.213Z",
+          "status": "completed",
+          "ended_at": "2026-07-30T04:41:41.538Z",
+          "elapsed_ms": 92325
+        },
+        "todo:2": {
+          "task_key": "todo:2",
+          "task_label": "2",
+          "task_title": "**Módulo SSTP Protocol (traducción Python → Kotlin)**",
+          "session_id": "ses_04eab8559ffenJ6fkU6Ro4pw2f",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "updated_at": "2026-07-30T06:09:14.387Z",
+          "started_at": "2026-07-30T05:12:12.391Z",
+          "status": "completed",
+          "ended_at": "2026-07-30T06:09:14.387Z",
+          "elapsed_ms": 3421996
+        }
+      }
     }
   },
   "active_plan": "/home/antonio/Desarrollo/lab/ucf-vpn/.sisyphus/plans/ucf-vpn-android.md",
   "started_at": "2026-07-30T04:31:04.373Z",
   "status": "active",
-  "updated_at": "2026-07-30T04:31:04.373Z",
+  "updated_at": "2026-07-30T06:09:14.387Z",
   "session_ids": [
     "ses_05086ee36ffeDt4VWo3cRre02q"
   ],
@@ -30,6 +57,33 @@
     "ses_05086ee36ffeDt4VWo3cRre02q": "direct"
   },
   "plan_name": "ucf-vpn-android",
-  "task_sessions": {},
+  "task_sessions": {
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "**Repositorio + Gradle + GitHub Actions scaffold**",
+      "session_id": "ses_04eb1ccb7ffe0c1LShvDn1FPay",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-07-30T04:41:41.538Z",
+      "started_at": "2026-07-30T04:40:09.213Z",
+      "status": "completed",
+      "ended_at": "2026-07-30T04:41:41.538Z",
+      "elapsed_ms": 92325
+    },
+    "todo:2": {
+      "task_key": "todo:2",
+      "task_label": "2",
+      "task_title": "**Módulo SSTP Protocol (traducción Python → Kotlin)**",
+      "session_id": "ses_04eab8559ffenJ6fkU6Ro4pw2f",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-07-30T06:09:14.387Z",
+      "started_at": "2026-07-30T05:12:12.391Z",
+      "status": "completed",
+      "ended_at": "2026-07-30T06:09:14.387Z",
+      "elapsed_ms": 3421996
+    }
+  },
   "agent": "atlas"
 }
