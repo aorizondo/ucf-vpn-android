@@ -1,0 +1,35 @@
+{
+  "schema_version": 2,
+  "active_work_id": "ucf-vpn-android-d6e23428",
+  "works": {
+    "ucf-vpn-android-d6e23428": {
+      "work_id": "ucf-vpn-android-d6e23428",
+      "active_plan": "/home/antonio/Desarrollo/lab/ucf-vpn/.sisyphus/plans/ucf-vpn-android.md",
+      "plan_name": "ucf-vpn-android",
+      "status": "active",
+      "started_at": "2026-07-30T04:31:04.373Z",
+      "updated_at": "2026-07-30T04:31:04.373Z",
+      "session_ids": [
+        "ses_05086ee36ffeDt4VWo3cRre02q"
+      ],
+      "session_origins": {
+        "ses_05086ee36ffeDt4VWo3cRre02q": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    }
+  },
+  "active_plan": "/home/antonio/Desarrollo/lab/ucf-vpn/.sisyphus/plans/ucf-vpn-android.md",
+  "started_at": "2026-07-30T04:31:04.373Z",
+  "status": "active",
+  "updated_at": "2026-07-30T04:31:04.373Z",
+  "session_ids": [
+    "ses_05086ee36ffeDt4VWo3cRre02q"
+  ],
+  "session_origins": {
+    "ses_05086ee36ffeDt4VWo3cRre02q": "direct"
+  },
+  "plan_name": "ucf-vpn-android",
+  "task_sessions": {},
+  "agent": "atlas"
+}
