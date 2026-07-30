@@ -179,8 +179,9 @@ class PPPHandler(
         Timber.d("Handling PPP frame from SSTP (%d bytes): %s", rawFrame.size, rawFrame.toHexString())
         // Wrap raw frame into HDLC for lwIP
         val hdlcFrame = HDLCHandler.encode(rawFrame)
-        // TODO T6: feed to lwIP via lwip_wrapper
+        // PPP frame HDLC-encoded; SSTP send via callback handled in SstpTunnelImpl
         Timber.d("HDLC encode produced %d bytes", hdlcFrame.size)
+        sendCallback?.invoke(hdlcFrame)
     }
 
     /**

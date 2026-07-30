@@ -84,7 +84,7 @@ class VpnGatewayService : VpnService() {
      * @param vpnConfig TUN interface configuration
      * @return Result.success(Unit) if tunnel started, Result.failure(exception) otherwise
      */
-    fun startWithWireGuard(wgConfig: WireGuardConfig, vpnConfig: VpnConfig = VpnConfig.DEFAULT): Result<Unit> {
+    suspend fun startWithWireGuard(wgConfig: WireGuardConfig, vpnConfig: VpnConfig = VpnConfig.DEFAULT): Result<Unit> {
         Timber.tag(TAG).d("Starting with WireGuard...")
 
         // Initialize WireGuardManager if not already done
@@ -94,17 +94,8 @@ class VpnGatewayService : VpnService() {
 
         val manager = wireGuardManager!!
 
-        // Start WireGuard tunnel in a coroutine
-        serviceScope.launch {
-            val result = manager.start(wgConfig, vpnConfig)
-            if (result.isFailure) {
-                Timber.tag(TAG).e(result.exceptionOrNull(), "WireGuard start failed")
-            }
-        }
-
-        // For synchronous callers, return success if manager was initialized
-        // The actual result will be reported via the manager's state flow
-        return Result.success(Unit)
+        // Start WireGuard tunnel and await result (suspending)
+        return manager.start(wgConfig, vpnConfig)
     }
 
     /**

@@ -994,7 +994,7 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ### Wave 4 — CI/CD y Release
 
-- [ ] 16. **GitHub Actions workflow completo**
+- [x] 16. **GitHub Actions workflow completo**
 
   **Qué hacer**:
   - Crear workflow `build.yml`:
@@ -1044,7 +1044,7 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ---
 
-- [ ] 17. **Prueba de build APK + firma**
+- [x] 17. **Prueba de build APK + firma**
 
   **Qué hacer**:
   - Verificar APK se genera correctamente
@@ -1087,7 +1087,7 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ---
 
-- [ ] 18. **Documentación + README**
+- [x] 18. **Documentación + README**
 
   **Qué hacer**:
   - README.md con:
@@ -1122,7 +1122,7 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ---
 
-- [ ] 19. **Release APK**
+- [x] 19. **Release APK**
 
   **Qué hacer**:
   - Tag de release en GitHub

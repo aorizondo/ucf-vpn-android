@@ -158,7 +158,10 @@ class VpnOrchestrator(
 
     // Internal reconnect manager if not provided
     private val internalReconnectManager = reconnectManager ?: ReconnectManager(
-        onReconnect = { performConnectionSequence(config!!) }
+        onReconnect = {
+            val cfg = config
+            if (cfg != null) performConnectionSequence(cfg)
+        }
     )
     private val reconnectManager: ReconnectManager = internalReconnectManager
 
