@@ -26,9 +26,10 @@ jobs:
           distribution: "temurin"
 
       - name: Setup Gradle
-        uses: gradle/gradle-build-action@v3
+        uses: gradle/actions/setup-gradle@v3
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          gradle-version: wrapper
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -36,6 +37,18 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Create debug keystore for APK signing
+        run: |
+          keytool -genkey -v -keystore app/debug.keystore \
+            -alias androiddebugkey -storepass android -keypass android \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug, O=Android, C=US"
+          cat > keystore.properties << EOF
+storePassword=android
+keyPassword=android
+keyAlias=androiddebugkey
+storeFile=app/debug.keystore
+EOF
       - name: Build and run unit tests
         run: ./gradlew build test --stacktrace
 
@@ -65,9 +78,10 @@ jobs:
           distribution: "temurin"
 
       - name: Setup Gradle
-        uses: gradle/gradle-build-action@v3
+        uses: gradle/actions/setup-gradle@v3
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          gradle-version: wrapper
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -85,7 +99,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api-level }}
-          target: default
+          target: google_apis
           arch: x86_64
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
           disable-animations: true
@@ -113,9 +127,10 @@ jobs:
           distribution: "temurin"
 
       - name: Setup Gradle
-        uses: gradle/gradle-build-action@v3
+        uses: gradle/actions/setup-gradle@v3
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          gradle-version: wrapper
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -123,6 +138,18 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Create debug keystore for signing
+        run: |
+          keytool -genkey -v -keystore app/debug.keystore \
+            -alias androiddebugkey -storepass android -keypass android \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug, O=Android, C=US"
+          cat > keystore.properties << EOF
+storePassword=android
+keyPassword=android
+keyAlias=androiddebugkey
+storeFile=app/debug.keystore
+EOF
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace
 

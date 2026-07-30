@@ -745,7 +745,7 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ### Wave 3 — Integración
 
-- [ ] 11. **Integración stack completo**
+- [x] 11. **Integración stack completo**
 
   **Qué hacer**:
   - Integrar todos los componentes:
@@ -801,7 +801,7 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ---
 
-- [ ] 12. **UI de configuración + estados de conexión**
+- [x] 12. **UI de configuración + estados de conexión**
 
   **Qué hacer**:
   - Completar UI Jetpack Compose con:
@@ -856,7 +856,7 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ---
 
-- [ ] 13. **Logging interno + manejo de errores**
+- [x] 13. **Logging interno + manejo de errores**
 
   **Qué hacer**:
   - Implementar sistema de logging:
@@ -903,7 +903,7 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ---
 
-- [ ] 14. **Modo dinámico wstunnel**
+- [x] 14. **Modo dinámico wstunnel**
 
   **Qué hacer**:
   - Implementar UI y lógica para modo dinámico de wstunnel:
@@ -947,7 +947,7 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ---
 
-- [ ] 15. **Pruebas de reconexión y edge cases**
+- [x] 15. **Pruebas de reconexión y edge cases**
 
   **Qué hacer**:
   - Escribir tests de integración para:
