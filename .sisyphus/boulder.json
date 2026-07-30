@@ -8,7 +8,7 @@
       "plan_name": "ucf-vpn-android",
       "status": "active",
       "started_at": "2026-07-30T04:31:04.373Z",
-      "updated_at": "2026-07-30T06:22:06.093Z",
+      "updated_at": "2026-07-30T06:57:37.899Z",
       "session_ids": [
         "ses_05086ee36ffeDt4VWo3cRre02q"
       ],
@@ -50,8 +50,19 @@
           "session_id": "ses_04e5b0d52ffeLeFfMXXR1Sjcer",
           "agent": "Sisyphus-Junior",
           "category": "deep",
-          "updated_at": "2026-07-30T06:22:06.093Z",
+          "updated_at": "2026-07-30T06:27:19.347Z",
           "started_at": "2026-07-30T06:22:06.093Z",
+          "status": "completed",
+          "ended_at": "2026-07-30T06:27:19.347Z",
+          "elapsed_ms": 313254
+        },
+        "todo:11": {
+          "task_key": "todo:11",
+          "task_label": "11",
+          "task_title": "**Integración stack completo**",
+          "session_id": "ses_04e4afe0affeOO4PH3W1KaiR49",
+          "updated_at": "2026-07-30T06:57:37.899Z",
+          "started_at": "2026-07-30T06:57:37.899Z",
           "status": "running"
         }
       }
@@ -60,7 +71,7 @@
   "active_plan": "/home/antonio/Desarrollo/lab/ucf-vpn/.sisyphus/plans/ucf-vpn-android.md",
   "started_at": "2026-07-30T04:31:04.373Z",
   "status": "active",
-  "updated_at": "2026-07-30T06:22:06.093Z",
+  "updated_at": "2026-07-30T06:57:37.899Z",
   "session_ids": [
     "ses_05086ee36ffeDt4VWo3cRre02q"
   ],
@@ -102,8 +113,19 @@
       "session_id": "ses_04e5b0d52ffeLeFfMXXR1Sjcer",
       "agent": "Sisyphus-Junior",
       "category": "deep",
-      "updated_at": "2026-07-30T06:22:06.093Z",
+      "updated_at": "2026-07-30T06:27:19.347Z",
       "started_at": "2026-07-30T06:22:06.093Z",
+      "status": "completed",
+      "ended_at": "2026-07-30T06:27:19.347Z",
+      "elapsed_ms": 313254
+    },
+    "todo:11": {
+      "task_key": "todo:11",
+      "task_label": "11",
+      "task_title": "**Integración stack completo**",
+      "session_id": "ses_04e4afe0affeOO4PH3W1KaiR49",
+      "updated_at": "2026-07-30T06:57:37.899Z",
+      "started_at": "2026-07-30T06:57:37.899Z",
       "status": "running"
     }
   },

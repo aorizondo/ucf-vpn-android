@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ucfvpn.app.state.ConnectionState
+import com.ucfvpn.app.state.VpnState
 import com.ucfvpn.app.ui.theme.VpnAuthenticating
 import com.ucfvpn.app.ui.theme.VpnConnected
 import com.ucfvpn.app.ui.theme.VpnConnecting
@@ -56,28 +57,93 @@ import com.ucfvpn.app.ui.theme.VpnError
 import com.ucfvpn.app.ui.viewmodel.VpnViewModel
 import kotlinx.coroutines.delay
 
-data class StackStage(
-    val label: String,
-    val icon: StackStageIcon
-)
-
+/** Icon state for each stage in the connection stack. */
 enum class StackStageIcon {
     PENDING, IN_PROGRESS, DONE, ERROR
+}
+
+/**
+ * Compute the stack stages based on the current [VpnState].
+ * Shows which layers are done, in progress, or errored.
+ */
+fun computeStackStages(vpnState: VpnState): List<Pair<String, StackStageIcon>> {
+    return listOf(
+        "SSTP" to when (vpnState) {
+            is VpnState.Disconnected -> StackStageIcon.PENDING
+            is VpnState.SstpConnecting -> StackStageIcon.IN_PROGRESS
+            is VpnState.SstpConnected -> StackStageIcon.DONE
+            is VpnState.ProxyAuthenticating -> StackStageIcon.DONE
+            is VpnState.ProxyAuthenticated -> StackStageIcon.DONE
+            is VpnState.WstunnelStarting -> StackStageIcon.DONE
+            is VpnState.WstunnelRunning -> StackStageIcon.DONE
+            is VpnState.WireGuardConnecting -> StackStageIcon.DONE
+            is VpnState.WireGuardConnected -> StackStageIcon.DONE
+            is VpnState.VpnStarting -> StackStageIcon.DONE
+            is VpnState.VpnRunning -> StackStageIcon.DONE
+            is VpnState.SstpError -> StackStageIcon.ERROR
+            else -> StackStageIcon.PENDING
+        },
+        "Proxy Auth" to when (vpnState) {
+            is VpnState.Disconnected,
+            is VpnState.SstpConnecting,
+            is VpnState.SstpConnected -> StackStageIcon.PENDING
+            is VpnState.ProxyAuthenticating -> StackStageIcon.IN_PROGRESS
+            is VpnState.ProxyAuthenticated -> StackStageIcon.DONE
+            is VpnState.WstunnelStarting -> StackStageIcon.DONE
+            is VpnState.WstunnelRunning -> StackStageIcon.DONE
+            is VpnState.WireGuardConnecting -> StackStageIcon.DONE
+            is VpnState.WireGuardConnected -> StackStageIcon.DONE
+            is VpnState.VpnStarting -> StackStageIcon.DONE
+            is VpnState.VpnRunning -> StackStageIcon.DONE
+            is VpnState.ProxyError -> StackStageIcon.ERROR
+            else -> StackStageIcon.PENDING
+        },
+        "wstunnel" to when (vpnState) {
+            is VpnState.Disconnected,
+            is VpnState.SstpConnecting,
+            is VpnState.SstpConnected,
+            is VpnState.ProxyAuthenticating,
+            is VpnState.ProxyAuthenticated -> StackStageIcon.PENDING
+            is VpnState.WstunnelStarting -> StackStageIcon.IN_PROGRESS
+            is VpnState.WstunnelRunning -> StackStageIcon.DONE
+            is VpnState.WireGuardConnecting -> StackStageIcon.DONE
+            is VpnState.WireGuardConnected -> StackStageIcon.DONE
+            is VpnState.VpnStarting -> StackStageIcon.DONE
+            is VpnState.VpnRunning -> StackStageIcon.DONE
+            is VpnState.WstunnelError -> StackStageIcon.ERROR
+            else -> StackStageIcon.PENDING
+        },
+        "WireGuard" to when (vpnState) {
+            is VpnState.Disconnected,
+            is VpnState.SstpConnecting,
+            is VpnState.SstpConnected,
+            is VpnState.ProxyAuthenticating,
+            is VpnState.ProxyAuthenticated,
+            is VpnState.WstunnelStarting,
+            is VpnState.WstunnelRunning -> StackStageIcon.PENDING
+            is VpnState.WireGuardConnecting -> StackStageIcon.IN_PROGRESS
+            is VpnState.WireGuardConnected -> StackStageIcon.DONE
+            is VpnState.VpnStarting -> StackStageIcon.DONE
+            is VpnState.VpnRunning -> StackStageIcon.DONE
+            is VpnState.WireGuardError -> StackStageIcon.ERROR
+            else -> StackStageIcon.PENDING
+        },
+        "VPN" to when (vpnState) {
+            is VpnState.VpnStarting -> StackStageIcon.IN_PROGRESS
+            is VpnState.VpnRunning -> StackStageIcon.DONE
+            else -> StackStageIcon.PENDING
+        }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StatusScreen(viewModel: VpnViewModel) {
     val connectionState by viewModel.connectionState.collectAsState()
-    val stages = remember {
-        listOf(
-            StackStage("SSTP", StackStageIcon.PENDING),
-            StackStage("Proxy Auth", StackStageIcon.PENDING),
-            StackStage("wstunnel", StackStageIcon.PENDING),
-            StackStage("WireGuard", StackStageIcon.PENDING),
-            StackStage("VPN", StackStageIcon.PENDING)
-        )
-    }
+    val vpnState by viewModel.vpnState.collectAsState()
+
+    // Dynamic stack stages from the state machine
+    val stages = remember(vpnState) { computeStackStages(vpnState) }
 
     Scaffold(
         topBar = {
@@ -107,7 +173,7 @@ fun StatusScreen(viewModel: VpnViewModel) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Stack stages
+            // Stack stages — now dynamic
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -120,8 +186,8 @@ fun StatusScreen(viewModel: VpnViewModel) {
                         text = "Connection Stack",
                         style = MaterialTheme.typography.titleMedium
                     )
-                    stages.forEach { stage ->
-                        StackStageRow(stage = stage)
+                    stages.forEach { (label, icon) ->
+                        StackStageRow(label = label, icon = icon)
                     }
                 }
             }
@@ -317,26 +383,26 @@ fun ConnectionIndicator(state: ConnectionState) {
 }
 
 @Composable
-fun StackStageRow(stage: StackStage) {
+fun StackStageRow(label: String, icon: StackStageIcon) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        val (icon, tint) = when (stage.icon) {
+        val (imageVector, tint) = when (icon) {
             StackStageIcon.DONE -> Icons.Default.Check to VpnConnected
             StackStageIcon.IN_PROGRESS -> Icons.Default.MoreHoriz to VpnConnecting
             StackStageIcon.ERROR -> Icons.Default.Close to VpnError
             StackStageIcon.PENDING -> Icons.Default.MoreHoriz to VpnDisconnected
         }
         Icon(
-            imageVector = icon,
-            contentDescription = stage.icon.name,
+            imageVector = imageVector,
+            contentDescription = icon.name,
             tint = tint,
             modifier = Modifier.size(24.dp)
         )
         Spacer(modifier = Modifier.width(12.dp))
         Text(
-            text = stage.label,
+            text = label,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface
         )

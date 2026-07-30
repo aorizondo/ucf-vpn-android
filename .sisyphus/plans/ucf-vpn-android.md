@@ -430,7 +430,7 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ### Wave 2 — Núcleo
 
-- [ ] 6. **SSTP Client completo (fork/adapt Open-SSTP-Client)**
+- [x] 6. **SSTP Client completo (fork/adapt Open-SSTP-Client)**
 
   **Qué hacer**:
   - Adaptar `kittoku/Open-SSTP-Client` para usar como módulo, no como app independiente
@@ -497,7 +497,7 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ---
 
-- [ ] 7. **Proxy Auth Module (OkHttp + CSRF flow)**
+- [x] 7. **Proxy Auth Module (OkHttp + CSRF flow)**
 
   **Qué hacer**:
   - Implementar módulo de autenticación de portal cautivo:
@@ -548,7 +548,7 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ---
 
-- [ ] 8. **wstunnel wrapper (binary embedding + subprocess)**
+- [x] 8. **wstunnel wrapper (binary embedding + subprocess)**
 
   **Qué hacer**:
   - Descargar wstunnel ARM64 binary de releases oficiales
@@ -617,7 +617,7 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ---
 
-- [ ] 9. **VpnService con protect() + integración WireGuard**
+- [x] 9. **VpnService con protect() + integración WireGuard**
 
   **Qué hacer**:
   - Implementar `VpnService` personalizado:
@@ -680,7 +680,7 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ---
 
-- [ ] 10. **Máquina de estados + reconexión automática**
+- [x] 10. **Máquina de estados + reconexión automática**
 
   **Qué hacer**:
   - Implementar máquina de estados del stack:
