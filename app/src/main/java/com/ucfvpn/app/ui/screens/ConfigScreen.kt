@@ -34,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
@@ -52,6 +53,10 @@ fun ConfigScreen(viewModel: VpnViewModel) {
     var proxyExpanded by remember { mutableStateOf(false) }
     var wstunnelExpanded by remember { mutableStateOf(false) }
     var wireguardExpanded by remember { mutableStateOf(false) }
+  // Sync currentConfig with ViewModel's saved state on first composition
+    LaunchedEffect(Unit) {
+        currentConfig = config
+    }
 
     Scaffold(
         topBar = {
@@ -157,7 +162,7 @@ fun ConfigScreen(viewModel: VpnViewModel) {
                 OutlinedTextField(
                     value = currentConfig.wstunnelUrl,
                     onValueChange = { currentConfig = currentConfig.copy(wstunnelUrl = it) },
-                    label = { Text("Server URL") },
+                    label = { Text("Server URL (ws:// or wss://)") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
@@ -180,6 +185,63 @@ fun ConfigScreen(viewModel: VpnViewModel) {
                             Text("Dynamic")
                         }
                     }
+                }
+
+                // Dynamic mode fields — only visible when DYNAMIC is selected
+                if (currentConfig.wstunnelMode == WstunnelMode.DYNAMIC) {
+                    OutlinedTextField(
+                        value = currentConfig.wstunnelLocalPort.toString(),
+                        onValueChange = { value ->
+                            val port = value.filter { it.isDigit() }.take(5).toIntOrNull()
+                                ?: currentConfig.wstunnelLocalPort
+                            if (port in 1..65535)
+                                currentConfig = currentConfig.copy(wstunnelLocalPort = port)
+                        },
+                        label = { Text("Local UDP Port") },
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = currentConfig.wstunnelRemoteHost,
+                        onValueChange = {
+                            currentConfig = currentConfig.copy(wstunnelRemoteHost = it)
+                        },
+                        label = { Text("Remote Host") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = currentConfig.wstunnelRemotePort.toString(),
+                        onValueChange = { value ->
+                            val port = value.filter { it.isDigit() }.take(5).toIntOrNull()
+                                ?: currentConfig.wstunnelRemotePort
+                            if (port in 1..65535)
+                                currentConfig = currentConfig.copy(wstunnelRemotePort = port)
+                        },
+                        label = { Text("Remote Port") },
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = currentConfig.wstunnelWsPingFrequency,
+                        onValueChange = {
+                            currentConfig = currentConfig.copy(wstunnelWsPingFrequency = it)
+                        },
+                        label = { Text("WebSocket Ping Frequency (e.g. 10s)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = currentConfig.wstunnelRetryMaxBackoff,
+                        onValueChange = {
+                            currentConfig = currentConfig.copy(wstunnelRetryMaxBackoff = it)
+                        },
+                        label = { Text("Retry Max Backoff (e.g. 10s)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
                 }
             }
 
@@ -302,9 +364,22 @@ fun SwitchRow(
 }
 
 private fun validateConfig(config: UiConfig): Boolean {
+    // SSTP required fields
     if (config.sstpHost.isBlank()) return false
     if (config.sstpPort !in 1..65535) return false
+    // Proxy required fields
     if (config.proxyHost.isBlank()) return false
     if (config.proxyPort !in 1..65535) return false
+    // wstunnel URL validation (must be ws:// or wss://)
+    if (!config.wstunnelUrl.startsWith("ws://") && !config.wstunnelUrl.startsWith("wss://")) return false
+    if (config.wstunnelUrl.isBlank()) return false
+    // wstunnel dynamic mode validation
+    if (config.wstunnelMode == WstunnelMode.DYNAMIC) {
+        if (config.wstunnelLocalPort !in 1..65535) return false
+        if (config.wstunnelRemoteHost.isBlank()) return false
+        if (config.wstunnelRemotePort !in 1..65535) return false
+        if (config.wstunnelWsPingFrequency.isBlank()) return false
+        if (config.wstunnelRetryMaxBackoff.isBlank()) return false
+    }
     return true
 }

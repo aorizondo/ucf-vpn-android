@@ -1,13 +1,18 @@
 package com.ucfvpn.app.ui.viewmodel
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.CreationExtras
+import com.ucfvpn.app.orchestrator.VpnOrchestrator
 import com.ucfvpn.app.state.ConnectionState
+import com.ucfvpn.app.state.VpnState
+import com.ucfvpn.app.prefs.ConfigPreferences
+
+import com.ucfvpn.app.wstunnel.WstunnelConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 data class UiConfig(
     // SSTP
@@ -23,6 +28,11 @@ data class UiConfig(
     // wstunnel
     val wstunnelUrl: String = "wss://solverius-ws.zpwhqo.easypanel.host",
     val wstunnelMode: WstunnelMode = WstunnelMode.FIXED,
+    val wstunnelLocalPort: Int = 51820,
+    val wstunnelRemoteHost: String = "72.62.160.61",
+    val wstunnelRemotePort: Int = 51820,
+    val wstunnelWsPingFrequency: String = "10s",
+    val wstunnelRetryMaxBackoff: String = "10s",
     // WireGuard
     val wireGuardEndpoint: String = "127.0.0.1:51820",
     val wireGuardLocalIp: String = "10.8.0.2/24",
@@ -30,59 +40,107 @@ data class UiConfig(
     // General
     val ignoreSslErrors: Boolean = true,
     val autoReconnect: Boolean = true
-)
+) {
+    /**
+     * Convert UI config to the wstunnel domain model.
+     * [WstunnelMode.FIXED] uses hardcoded defaults from the original
+     * pre-up.sh command. [WstunnelMode.DYNAMIC] forwards all
+     * user-customised parameters.
+     */
+    fun toWstunnelConfig(): WstunnelConfig {
+        val mode = if (wstunnelMode == WstunnelMode.DYNAMIC)
+            WstunnelConfig.Mode.DYNAMIC else WstunnelConfig.Mode.FIXED
+
+        return WstunnelConfig(
+            mode = mode,
+            localPort = wstunnelLocalPort,
+            remoteHost = wstunnelRemoteHost,
+            remotePort = wstunnelRemotePort,
+            serverUrl = wstunnelUrl,
+            proxyHost = proxyHost,
+            proxyPort = proxyPort,
+            retryMaxBackoff = wstunnelRetryMaxBackoff,
+            websocketPingFrequency = wstunnelWsPingFrequency
+        )
+    }
+}
 
 enum class WstunnelMode(val displayName: String) {
     FIXED("Fixed"),
     DYNAMIC("Dynamic")
 }
+class VpnViewModel(
+    application: Application,
+    private val orchestrator: VpnOrchestrator
+) : AndroidViewModel(application) {
 
-class VpnViewModel : ViewModel() {
+    /** Simplified connection state for UI (Connected, Disconnected, Error, etc.). */
+    val connectionState: StateFlow<ConnectionState> = orchestrator.connectionState
 
-    private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
-    val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
+    /** Full VPN state-machine state for detailed stack visualization. */
+    val vpnState: StateFlow<VpnState> = orchestrator.state
 
-    private val logBuffer = ArrayDeque<String>(100)
-    private val _connectionLog = MutableStateFlow<String>("")
-    val connectionLog: StateFlow<String> = _connectionLog.asStateFlow()
+    /** Connection log as a newline-separated string for LogScreen. */
+    val connectionLog: StateFlow<String> = MutableStateFlow("").also { flow ->
+        kotlinx.coroutines.MainScope().launch {
+            orchestrator.connectionLog.collect { entries ->
+                flow.value = entries.joinToString("\n")
+            }
+        }
+    }
 
-    private val _uiConfig = MutableStateFlow(UiConfig())
+    /** Editable UI configuration form state — loaded from persisted preferences. */
+    private val _uiConfig = MutableStateFlow(ConfigPreferences(application).load())
     val uiConfig: StateFlow<UiConfig> = _uiConfig.asStateFlow()
 
-    private val dateFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
-
+    /**
+     * Initiate VPN connection with the current configuration.
+     * Persists config to DataStore + Keystore before connecting.
+     */
     fun connect() {
-        appendLog("INFO", "Connect requested")
-        _connectionState.value = ConnectionState.Connecting
-        appendLog("INFO", "State: Connecting → Authenticating")
-        _connectionState.value = ConnectionState.Authenticating
-        appendLog("INFO", "State: Authenticating → Connected")
-        _connectionState.value = ConnectionState.Connected
+        val config = _uiConfig.value
+        orchestrator.saveConfig(config)
+        orchestrator.connect(config)
     }
 
+    /** Disconnect the VPN and stop all services. */
     fun disconnect() {
-        appendLog("INFO", "Disconnect requested")
-        _connectionState.value = ConnectionState.Disconnected
-        appendLog("INFO", "State: Disconnected")
+        orchestrator.disconnect()
     }
 
+    /** Update the UI configuration form state and persist it. */
     fun updateConfig(config: UiConfig) {
         _uiConfig.value = config
-        appendLog("INFO", "Configuration updated")
+        orchestrator.saveConfig(config)
     }
 
+    /** Clear all log entries. */
     fun clearLogs() {
-        logBuffer.clear()
-        _connectionLog.value = ""
+        orchestrator.clearLogs()
     }
 
+    /** Append a log entry manually (for UI-initiated actions). */
     fun appendLog(level: String, message: String) {
-        val timestamp = dateFormat.format(Date())
-        val entry = "$timestamp [$level] $message"
-        if (logBuffer.size >= 100) {
-            logBuffer.removeFirst()
+        kotlinx.coroutines.MainScope().launch {
+            orchestrator.emitLog(level, message)
         }
-        logBuffer.addLast(entry)
-        _connectionLog.value = logBuffer.joinToString("\n")
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        orchestrator.shutdown()
+    }
+
+    companion object {
+        val Factory: ViewModelProvider.Factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : androidx.lifecycle.ViewModel> create(
+                modelClass: Class<T>,
+                extras: CreationExtras
+            ): T {
+                throw IllegalStateException(
+                    "VpnViewModel requires a VpnOrchestrator. Use custom factory.")
+            }
+        }
     }
 }
