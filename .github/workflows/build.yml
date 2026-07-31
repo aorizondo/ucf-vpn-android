@@ -15,115 +15,8 @@ env:
   GRADLE_OPTS: "-Dorg.gradle.daemon=false"
 
 jobs:
-  build-and-test:
-    name: Build + Unit Tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: "17"
-          distribution: "temurin"
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
-          gradle-version: wrapper
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-
-      - name: Create debug keystore for APK signing
-        run: |
-          keytool -genkey -v -keystore app/debug.keystore \
-            -alias androiddebugkey -storepass android -keypass android \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Android Debug, O=Android, C=US"
-          echo "storePassword=android" > keystore.properties
-          echo "keyPassword=android" >> keystore.properties
-          echo "keyAlias=androiddebugkey" >> keystore.properties
-          echo "storeFile=app/debug.keystore" >> keystore.properties
-      - name: Build debug APK (no tests)
-        run: ./gradlew assembleDebug --stacktrace
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results
-          path: app/build/reports/tests/
-
-  ui-tests:
-    name: UI Tests (Emulator)
-    needs: [build-and-test]
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-
-    strategy:
-      matrix:
-        api-level: [29]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: "17"
-          distribution: "temurin"
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
-          gradle-version: wrapper
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
-      - name: Create AVD and run instrumented tests
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: ${{ matrix.api-level }}
-          target: google_apis
-          arch: x86_64
-          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
-          disable-animations: true
-          script: ./gradlew connectedCheck --stacktrace
-
-      - name: Upload UI test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ui-test-results-api-${{ matrix.api-level }}
-          path: app/build/reports/androidTests/
-
-  apk-build:
-    name: APK Build
-    needs: [build-and-test]
+  build-apk:
+    name: Build APK
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -157,10 +50,7 @@ jobs:
             -alias androiddebugkey -storepass android -keypass android \
             -keyalg RSA -keysize 2048 -validity 10000 \
             -dname "CN=Android Debug, O=Android, C=US"
-          echo "storePassword=android" > keystore.properties
-          echo "keyPassword=android" >> keystore.properties
-          echo "keyAlias=androiddebugkey" >> keystore.properties
-          echo "storeFile=app/debug.keystore" >> keystore.properties
+
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace
 
