@@ -33,6 +33,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,7 +47,7 @@ import com.ucfvpn.app.ui.viewmodel.WstunnelMode
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConfigScreen(viewModel: VpnViewModel) {
-    val config by viewModel.uiConfig
+    val config by viewModel.uiConfig.collectAsState()
     var currentConfig by remember { mutableStateOf(config) }
     var sstpExpanded by remember { mutableStateOf(true) }
     var proxyExpanded by remember { mutableStateOf(false) }
