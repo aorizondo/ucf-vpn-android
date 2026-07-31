@@ -7,7 +7,6 @@ import timber.log.Timber
  * Translates to Kotlin from Python reference in solverius/sstp/sstp/ppp_handler.py
  */
 object HDLCHandler {
-
     /**
      * PPP FCS-16 lookup table.
      * Must be bit-identical to the table in ppp_handler.py lines 89-122.
@@ -113,7 +112,22 @@ object HDLCHandler {
      * Splits by 0x7E, unescapes, strips FCS (last 2 bytes), returns PPP payload.
      */
     fun decode(data: ByteArray): ByteArray {
-        val parts = data.split(0x7E.toByte())
+        // Split by 0x7E delimiter - manual implementation since ByteArray has no split method
+        val parts = mutableListOf<ByteArray>()
+        var currentPart = mutableListOf<Byte>()
+        for (b in data) {
+            if (b == 0x7E.toByte()) {
+                if (currentPart.isNotEmpty()) {
+                    parts.add(currentPart.toByteArray())
+                    currentPart.clear()
+                }
+            } else {
+                currentPart.add(b)
+            }
+        }
+        if (currentPart.isNotEmpty()) {
+            parts.add(currentPart.toByteArray())
+        }
         for (part in parts) {
             if (part.size < 4) continue
 

@@ -17,6 +17,8 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.TrustManager
+import com.ucfvpn.app.sstp.protocol.createCallConnectRequest
+import kotlin.also
 import javax.net.ssl.X509TrustManager
 
 /**
@@ -35,6 +37,9 @@ class SstpHandshake(
         private const val USER_AGENT = "SSTP-Client/1.0 (Windows NT 10.0; Win64; x64)"
         private const val CONTENT_LENGTH = "18446744073709551615" // 2^64-1
     }
+
+/** Connection error exception */
+class ConnectionError(message: String) : Exception(message)
 
     private var socket: Socket? = null
     private var sslSocket: SSLSocket? = null

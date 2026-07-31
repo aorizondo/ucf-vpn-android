@@ -7,13 +7,61 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.Cookie
+import okhttp3.CookieJar
 import okhttp3.FormBody
-import okhttp3.JavaNetCookieJar
+import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import timber.log.Timber
 import java.io.IOException
 import java.net.CookieManager
+
+/**
+ * A CookieJar implementation that delegates to java.net.CookieManager.
+ */
+class JavaNetCookieJar(private val cookieManager: CookieManager) : CookieJar {
+    override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+        val javaUrl = java.net.URL(url.toString())
+        cookies.forEach { cookie ->
+            val javaCookie = java.net.HttpCookie(
+                cookie.name,
+                cookie.value
+            ).apply {
+                domain = cookie.domain
+                path = cookie.path
+                version = 0
+                if (cookie.expiresAt > 0) {
+                    maxAge = (cookie.expiresAt - System.currentTimeMillis()) / 1000
+                }
+            }
+            cookieManager.cookieStore.add(javaUrl.toURI(), javaCookie)
+        }
+    }
+
+    override fun loadForRequest(url: HttpUrl): List<Cookie> {
+        return try {
+            val javaUrl = java.net.URL(url.toString())
+            val cookies = cookieManager.cookieStore.get(javaUrl.toURI())
+            cookies.map { javaCookie ->
+                Cookie.Builder()
+                    .name(javaCookie.name)
+                    .value(javaCookie.value)
+                    .domain(javaCookie.domain)
+                    .path(javaCookie.path)
+                    .expiresAt(if (javaCookie.maxAge >= 0) {
+                        System.currentTimeMillis() + javaCookie.maxAge * 1000
+                    } else {
+                        Long.MAX_VALUE
+                    })
+                    .build()
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to load cookies for $url")
+            emptyList()
+        }
+    }
+}
 
 class ProxyAuthService(
     baseUrl: String = "https://internet.ucf.edu.cu",

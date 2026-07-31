@@ -3,9 +3,9 @@ package com.ucfvpn.app.ui.navigation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Circle
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -22,6 +22,8 @@ import com.ucfvpn.app.ui.screens.ConfigScreen
 import com.ucfvpn.app.ui.screens.LogScreen
 import com.ucfvpn.app.ui.screens.StatusScreen
 import com.ucfvpn.app.ui.viewmodel.VpnViewModel
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Remove
 
 data class BottomNavItem(
     val label: String,
@@ -32,7 +34,7 @@ data class BottomNavItem(
 val bottomNavItems = listOf(
     BottomNavItem(
         label = "Status",
-        icon = Icons.Default.Circle,
+        icon = Icons.Default.Check,
         content = { viewModel -> StatusScreen(viewModel = viewModel) }
     ),
     BottomNavItem(
@@ -42,7 +44,7 @@ val bottomNavItems = listOf(
     ),
     BottomNavItem(
         label = "Logs",
-        icon = Icons.Default.Terminal,
+        icon = Icons.Default.Clear,
         content = { viewModel -> LogScreen(viewModel = viewModel) }
     )
 )
