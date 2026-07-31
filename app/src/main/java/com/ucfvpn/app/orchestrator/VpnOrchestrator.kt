@@ -174,7 +174,7 @@ class VpnOrchestrator(
 
         // Observe reconnect state
         scope.launch {
-            reconnectManager.reconnectState.collect { reconnectState ->
+            internalReconnectManager.reconnectState.collect { reconnectState ->
                 when (reconnectState) {
                     is ReconnectState.Waiting ->
                         emitLog("INFO", "Reconnect attempt ${reconnectState.attempt} in ${reconnectState.delayMs}ms")

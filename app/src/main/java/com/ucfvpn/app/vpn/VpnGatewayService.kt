@@ -211,45 +211,9 @@ class VpnGatewayService : VpnService() {
      * @return true if protection was applied, false otherwise
      */
     fun protectSocket(socket: java.net.Socket): Boolean {
-        return protectFileDescriptor(socket.getFileDescriptor())
+        return protect(socket)
     }
 
-    /**
-     * Protects a file descriptor from being routed through the VPN tunnel.
-     *
-     * This is the lower-level version of [protectSocket] that takes a raw file descriptor.
-     * Use this when you have a FileDescriptor directly (e.g., from a Socket).
-     *
-     * ## CRITICAL ORDER:
-     * 1. Create/bind socket
-     * 2. Call protectFileDescriptor() to exempt it from VPN
-     * 3. Connect the socket
-     *
-     * Example:
-     * ```kotlin
-     * val sstpSocket = SSLSocketFactory.getDefault().createSocket()
-     * sstpSocket.bind(InetSocketAddress(0))
-     * vpnService.protectFileDescriptor(sstpSocket.getFileDescriptor())
-     * sstpSocket.connect(InetSocketAddress(sstpHost, sstpPort), timeout)
-     * ```
-     *
-     * @param fd The file descriptor to protect
-     * @return true if protection was applied, false otherwise
-     */
-    fun protectFileDescriptor(fd: FileDescriptor): Boolean {
-        val result = protect(fd)
-        Timber.tag(TAG).d("protectFileDescriptor result: $result (fd=$fd)")
-        return result
-    }
-
-    /**
-     * Protects a file descriptor by its integer value.
-     *
-     * This overload is useful when you have the raw fd as an integer.
-     *
-     * @param fd The file descriptor value to protect
-     * @return true if protection was applied, false otherwise
-     */
     fun protectFd(fd: Int): Boolean {
         val result = protect(fd)
         Timber.tag(TAG).d("protectFd result: $result (fd=$fd)")

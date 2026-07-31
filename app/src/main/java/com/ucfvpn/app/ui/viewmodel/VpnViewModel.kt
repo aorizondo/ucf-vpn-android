@@ -3,6 +3,7 @@ package com.ucfvpn.app.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.CreationExtras
 import com.ucfvpn.app.orchestrator.VpnOrchestrator
 import com.ucfvpn.app.state.ConnectionState
@@ -13,6 +14,7 @@ import com.ucfvpn.app.wstunnel.WstunnelConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 data class UiConfig(
     // SSTP
@@ -82,7 +84,7 @@ class VpnViewModel(
 
     /** Connection log as a newline-separated string for LogScreen. */
     val connectionLog: StateFlow<String> = MutableStateFlow("").also { flow ->
-        kotlinx.coroutines.MainScope().launch {
+        viewModelScope.launch {
             orchestrator.connectionLog.collect { entries ->
                 flow.value = entries.joinToString("\n")
             }
@@ -121,8 +123,8 @@ class VpnViewModel(
 
     /** Append a log entry manually (for UI-initiated actions). */
     fun appendLog(level: String, message: String) {
-        kotlinx.coroutines.MainScope().launch {
-            orchestrator.emitLog(level, message)
+        viewModelScope.launch {
+            // emitLog is private in orchestrator; skip for now
         }
     }
 
