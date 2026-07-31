@@ -4,6 +4,7 @@ import com.ucfvpn.app.sstp.protocol.SstpControlPacket
 import com.ucfvpn.app.sstp.protocol.SstpMessageType
 import com.ucfvpn.app.sstp.protocol.SstpPacket
 import com.ucfvpn.app.sstp.protocol.SstpProtocol
+import com.ucfvpn.app.sstp.protocol.createCallConnectRequest
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
 import java.net.Socket
@@ -107,12 +108,15 @@ class SstpHandshake(
         val context = createSslContext()
         val factory = context.socketFactory
 
-        sslSocket = factory.createSocket(socket, server, port, true) as SSLSocket.also { ssl ->
-            ssl.enabledProtocols = arrayOf("TLSv1.2", "TLSv1.3")
-            ssl.useClientMode = true
+        sslSocket = factory.createSocket(socket, server, port, true) as SSLSocket
+        with(sslSocket!!) {
+            enabledProtocols = arrayOf("TLSv1.2", "TLSv1.3")
+            useClientMode = true
 
-            // Set SNI hostname
-            ssl.session.peerHost = SNI_HOST
+            // Set SNI hostname via SSLParameters
+            val params = sslParameters
+            params.serverNames = listOf(javax.net.ssl.SNIHostName(SNI_HOST))
+            sslParameters = params
 
             // Perform handshake
             ssl.startHandshake()
@@ -245,7 +249,8 @@ class SstpHandshake(
         // Read remaining data
         val remaining = packet.length - 4
         if (remaining > 0) {
-            packet.data = receiveExact(remaining)
+            val packetData = receiveExact(remaining)
+            return SstpPacket(packet.version, packet.isControl, packet.length, packetData)
         }
 
         return packet
@@ -335,3 +340,5 @@ class SstpHandshake(
         Timber.d("Connection closed")
     }
 }
+
+class ConnectionError(message: String) : Exception(message)

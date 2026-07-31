@@ -23,6 +23,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -110,12 +111,7 @@ class VpnOrchestrator(
     private val wstunnelManager: WstunnelManager,
     private val wireGuardConfigRepository: WireGuardConfigRepository,
     private val stateMachine: VpnStateMachine = VpnStateMachine(),
-    reconnectManager: ReconnectManager? = null
-
-    /**
-     * VpnGatewayService instance (nullable — set after service binding).
-     * When null, WireGuard and VPN service steps are skipped gracefully.
-     */
+    reconnectManager: ReconnectManager? = null,
     var vpnService: VpnGatewayService? = null
 ) {
     // ── Public API ────────────────────────────────────────────────
@@ -125,7 +121,7 @@ class VpnOrchestrator(
     val state: StateFlow<VpnState> = stateMachine.state
 
     /** Connection state mapped for UI consumption */
-    val connectionState: StateFlow<ConnectionState> = MutableStateFlow(ConnectionState.Disconnected).also { flow ->
+    val connectionState: StateFlow<ConnectionState> = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected).also { flow ->
         scope.launch {
             stateMachine.state.collect { vpnState ->
                 flow.value = mapToConnectionState(vpnState)
@@ -728,7 +724,7 @@ class VpnOrchestrator(
         }
     }
 
-    private fun cleanupProxyAuth() {
+    private suspend fun cleanupProxyAuth() {
         try {
             emitLog("INFO", "Proxy: Resetting session...")
             proxyAuthService.reset()
@@ -739,7 +735,7 @@ class VpnOrchestrator(
         }
     }
 
-    private fun cleanupSstp() {
+    private suspend fun cleanupSstp() {
         try {
             emitLog("INFO", "SSTP: Disconnecting tunnel...")
             sstpTunnel.disconnect()
@@ -750,7 +746,7 @@ class VpnOrchestrator(
         }
     }
 
-    private fun cleanupVpnService() {
+    private suspend fun cleanupVpnService() {
         try {
             emitLog("INFO", "VPN: Shutting down service...")
             vpnService?.shutdown()

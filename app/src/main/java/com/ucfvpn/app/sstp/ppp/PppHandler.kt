@@ -1,6 +1,7 @@
 package com.ucfvpn.app.sstp.ppp
 
 import timber.log.Timber
+import java.io.ByteArrayOutputStream
 
 /**
  * Handles HDLC framing/escaping for PPPoS.
@@ -93,19 +94,20 @@ object HDLCHandler {
         val dataWithFcs = data + fcsLe
 
         // Escape and Frame using ACCM 0xFFFFFFFF (escape all 0x00-0x1F)
-        val out = byteArrayOf(0x7E.toByte())
+        val out = ByteArrayOutputStream()
+        out.write(0x7E)
         for (b in dataWithFcs) {
             val unsigned = b.toInt() and 0xFF
             if (unsigned < 0x20 || unsigned == 0x7E || unsigned == 0x7D) {
-                out += 0x7D.toByte()
-                out += (unsigned xor 0x20).toByte()
+                out.write(0x7D)
+                out.write(unsigned xor 0x20)
             } else {
-                out += b
+                out.write(unsigned)
             }
         }
-        out += 0x7E.toByte()
+        out.write(0x7E)
 
-        return out
+        return out.toByteArray()
     }
 
     /**
@@ -113,12 +115,26 @@ object HDLCHandler {
      * Splits by 0x7E, unescapes, strips FCS (last 2 bytes), returns PPP payload.
      */
     fun decode(data: ByteArray): ByteArray {
-        val parts = data.split(0x7E.toByte())
+        // Manual split by 0x7E delimiter
+        val parts = mutableListOf<ByteArray>()
+        var start = 0
+        for (i in data.indices) {
+            if (data[i] == 0x7E.toByte()) {
+                if (i > start) {
+                    parts.add(data.copyOfRange(start, i))
+                }
+                start = i + 1
+            }
+        }
+        if (start < data.size) {
+            parts.add(data.copyOfRange(start, data.size))
+        }
+        
         for (part in parts) {
             if (part.size < 4) continue
 
             // Unescape
-            val unescaped = byteArrayOf()
+            val unescaped = ByteArrayOutputStream()
             var escaped = false
             for (b in part) {
                 val unsigned = b.toInt() and 0xFF
@@ -126,16 +142,17 @@ object HDLCHandler {
                     escaped = true
                 } else if (escaped) {
                     escaped = false
-                    unescaped += (unsigned xor 0x20).toByte()
+                    unescaped.write(unsigned xor 0x20)
                 } else {
-                    unescaped += b
+                    unescaped.write(unsigned)
                 }
             }
 
+            val unescapedBytes = unescaped.toByteArray()
             // Now we have [FF 03] + [PPP] + [FCS]
             // Keep FF 03 if present. Just strip FCS (last 2 bytes).
-            if (unescaped.size > 2) {
-                return unescaped.copyOfRange(0, unescaped.size - 2)
+            if (unescapedBytes.size > 2) {
+                return unescapedBytes.copyOfRange(0, unescapedBytes.size - 2)
             }
         }
         return byteArrayOf()
