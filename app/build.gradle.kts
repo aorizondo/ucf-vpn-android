@@ -3,22 +3,6 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// Load keystore properties from file if it exists
-val keystoreProperties: Map<String, String> by lazy {
-    val f = rootProject.file("keystore.properties")
-    if (f.exists()) {
-        f.readLines()
-            .filter { "=" in it && !it.startsWith("#") }
-            .map { it.split("=", limit = 2) }
-            .associate { it[0].trim() to it[1].trim() }
-    } else {
-        emptyMap()
-    }
-}
-
-fun getKeystoreProp(key: String, default: String): String =
-    keystoreProperties[key] ?: default
-
 android {
     namespace = "com.ucfvpn.app"
     compileSdk = 34
@@ -29,12 +13,6 @@ android {
             keyPassword = "android"
             storeFile = file("debug.keystore")
             storePassword = "android"
-        }
-        create("release") {
-            keyAlias = getKeystoreProp("keyAlias", "androiddebugkey")
-            keyPassword = getKeystoreProp("keyPassword", "android")
-            storeFile = file(getKeystoreProp("storeFile", "app/debug.keystore"))
-            storePassword = getKeystoreProp("storePassword", "android")
         }
     }
 
@@ -58,7 +36,7 @@ android {
         }
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
