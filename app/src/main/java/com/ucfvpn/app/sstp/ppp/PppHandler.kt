@@ -181,14 +181,6 @@ class PPPHandler(
     var sendCallback: ((ByteArray) -> Unit)? = null
 
     /**
-     * Set the callback used to send data through the SSTP tunnel.
-     * Called by lwIP output with HDLC-framed PPP data.
-     */
-    fun setSendCallback(callback: ((ByteArray) -> Unit)?) {
-        sendCallback = callback
-    }
-
-    /**
      * Handle raw PPP frame received from SSTP tunnel.
      * Decode HDLC → feed to lwIP (placeholder: HDLC encode + callback stub).
      */
