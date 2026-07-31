@@ -17,7 +17,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.ArrowRight
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -325,7 +325,7 @@ fun CollapsibleSection(
             )
             IconButton(onClick = onToggle) {
                 Icon(
-                    imageVector = if (expanded) Icons.Default.ArrowDropDown else Icons.Default.ArrowRight,
+                    imageVector = if (expanded) Icons.Default.ArrowDropDown else Icons.Default.KeyboardArrowRight,
                     contentDescription = if (expanded) "Collapse" else "Expand"
                 )
             }
