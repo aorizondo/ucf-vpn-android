@@ -111,8 +111,8 @@ class PppHandlerTest {
     fun hdlc_encode_escapesFlagByte() {
         val rawFrame = byteArrayOf(0xFF.toByte(), 0x03.toByte(), 0x7e.toByte())
         val encoded = HDLCHandler.encode(rawFrame)
-        val contains7D5E = encoded.windowed(2).any {
-            (it[0].toInt() and 0xFF) == 0x7D && (it[1].toInt() and 0xFF) == 0x5E
+        val contains7D5E = encoded.toList().windowed(2).any { pair ->
+            (pair[0].toInt() and 0xFF) == 0x7D && (pair[1].toInt() and 0xFF) == 0x5E
         }
         assertTrue(contains7D5E)
         val decoded = HDLCHandler.decode(encoded)
@@ -123,8 +123,8 @@ class PppHandlerTest {
     fun hdlc_encode_escapesEscapeByte() {
         val rawFrame = byteArrayOf(0xFF.toByte(), 0x03.toByte(), 0x7d.toByte())
         val encoded = HDLCHandler.encode(rawFrame)
-        val contains7D5D = encoded.windowed(2).any {
-            (it[0].toInt() and 0xFF) == 0x7D && (it[1].toInt() and 0xFF) == 0x5D
+        val contains7D5D = encoded.toList().windowed(2).any { pair ->
+            (pair[0].toInt() and 0xFF) == 0x7D && (pair[1].toInt() and 0xFF) == 0x5D
         }
         assertTrue(contains7D5D)
         val decoded = HDLCHandler.decode(encoded)
