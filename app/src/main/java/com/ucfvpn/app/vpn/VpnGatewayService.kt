@@ -169,7 +169,7 @@ class VpnGatewayService : VpnService() {
         Timber.tag(TAG).d("Establishing TUN interface: address=$address/$prefixLength mtu=$mtu")
 
         val builder = Builder()
-        builder.setName("UCF VPN")
+        builder.setSession("UCF VPN")
         builder.setMtu(mtu)
         builder.addAddress(address, prefixLength)
 
