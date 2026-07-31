@@ -44,12 +44,10 @@ jobs:
             -alias androiddebugkey -storepass android -keypass android \
             -keyalg RSA -keysize 2048 -validity 10000 \
             -dname "CN=Android Debug, O=Android, C=US"
-          cat > keystore.properties << EOF
-storePassword=android
-keyPassword=android
-keyAlias=androiddebugkey
-storeFile=app/debug.keystore
-EOF
+          echo "storePassword=android" > keystore.properties
+          echo "keyPassword=android" >> keystore.properties
+          echo "keyAlias=androiddebugkey" >> keystore.properties
+          echo "storeFile=app/debug.keystore" >> keystore.properties
       - name: Build and run unit tests
         run: ./gradlew build test --stacktrace
 
@@ -145,12 +143,10 @@ EOF
             -alias androiddebugkey -storepass android -keypass android \
             -keyalg RSA -keysize 2048 -validity 10000 \
             -dname "CN=Android Debug, O=Android, C=US"
-          cat > keystore.properties << EOF
-storePassword=android
-keyPassword=android
-keyAlias=androiddebugkey
-storeFile=app/debug.keystore
-EOF
+          echo "storePassword=android" > keystore.properties
+          echo "keyPassword=android" >> keystore.properties
+          echo "keyAlias=androiddebugkey" >> keystore.properties
+          echo "storeFile=app/debug.keystore" >> keystore.properties
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace
 
