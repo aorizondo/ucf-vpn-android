@@ -64,7 +64,8 @@ enum class SstpEncapsulatedProtocol(val value: Int) {
 data class SstpPacket(
     val version: Int = 0x01,
     val isControl: Boolean = true,
-    var data: ByteArray = ByteArray(0)
+    val length: Int = 0,
+    val data: ByteArray = ByteArray(0)
 ) {
     /**
      * Pack SSTP packet to bytes.

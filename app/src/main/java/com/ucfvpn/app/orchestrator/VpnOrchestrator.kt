@@ -32,7 +32,6 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 import java.time.Instant
@@ -110,6 +109,7 @@ class VpnOrchestrator(
     private val proxyAuthService: ProxyAuthService,
     private val wstunnelManager: WstunnelManager,
     private val wireGuardConfigRepository: WireGuardConfigRepository,
+    private val stateMachine: VpnStateMachine = VpnStateMachine(),
     reconnectManager: ReconnectManager? = null
 
     /**
@@ -728,6 +728,7 @@ class VpnOrchestrator(
         }
     }
 
+    private fun cleanupProxyAuth() {
         try {
             emitLog("INFO", "Proxy: Resetting session...")
             proxyAuthService.reset()
@@ -738,6 +739,7 @@ class VpnOrchestrator(
         }
     }
 
+    private fun cleanupSstp() {
         try {
             emitLog("INFO", "SSTP: Disconnecting tunnel...")
             sstpTunnel.disconnect()
@@ -748,6 +750,7 @@ class VpnOrchestrator(
         }
     }
 
+    private fun cleanupVpnService() {
         try {
             emitLog("INFO", "VPN: Shutting down service...")
             vpnService?.shutdown()

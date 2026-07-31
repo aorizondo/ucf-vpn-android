@@ -2,7 +2,6 @@ package com.ucfvpn.app.sstp.client
 
 import com.ucfvpn.app.sstp.protocol.SstpControlPacket
 import com.ucfvpn.app.sstp.protocol.SstpMessageType
-import com.ucfvpn.app.sstp.protocol.SstpProtocol
 import com.ucfvpn.app.sstp.protocol.SstpPacket
 import com.ucfvpn.app.sstp.protocol.createCallConnected
 import com.ucfvpn.app.sstp.protocol.createCryptoBindingAttribute
