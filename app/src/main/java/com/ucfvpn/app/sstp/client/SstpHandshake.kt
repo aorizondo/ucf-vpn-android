@@ -109,7 +109,8 @@ class SstpHandshake(
         val factory = context.socketFactory
 
         sslSocket = factory.createSocket(socket, server, port, true) as SSLSocket
-        with(sslSocket!!) {
+        val ssl = sslSocket!!
+        with(ssl) {
             enabledProtocols = arrayOf("TLSv1.2", "TLSv1.3")
             useClientMode = true
 
