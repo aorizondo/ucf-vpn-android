@@ -8,14 +8,14 @@ package com.ucfvpn.app.wg
  * [WireGuardConfigRepository] which uses Android Keystore for secure storage.
  */
 data class WireGuardConfig(
-    val privateKey: String,
-    val address: String,
-    val dns: List<String>,
+    val privateKey: String = "",
+    val address: String = "10.8.0.2/24",
+    val dns: List<String> = listOf("1.1.1.1"),
     val mtu: Int = 1420,
-    val peerPublicKey: String,
-    val peerPresharedKey: String?,
-    val peerEndpoint: String,
-    val allowedIps: List<String>,
+    val peerPublicKey: String = "",
+    val peerPresharedKey: String? = null,
+    val peerEndpoint: String = "127.0.0.1:51820",
+    val allowedIps: List<String> = listOf("0.0.0.0/0", "::/0"),
     val persistentKeepalive: Int = 0
 ) {
     companion object {
