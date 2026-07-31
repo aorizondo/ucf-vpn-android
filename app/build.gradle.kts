@@ -4,9 +4,13 @@ plugins {
 }
 
 val keystorePropertiesFile = rootProject.file("keystore.properties")
-val keystoreProperties = java.util.Properties()
-if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(keystorePropertiesFile.inputStream())
+val keystoreProperties: Map<String, String> = if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.readLines()
+        .filter { "=" in it && !it.startsWith("#") }
+        .map { it.split("=", limit = 2) }
+        .associate { it[0].trim() to it[1].trim() }
+} else {
+    emptyMap()
 }
 
 android {
