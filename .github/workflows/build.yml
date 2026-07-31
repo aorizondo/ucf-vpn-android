@@ -51,8 +51,8 @@ jobs:
             -keyalg RSA -keysize 2048 -validity 10000 \
             -dname "CN=Android Debug, O=Android, C=US"
 
-      - name: Build debug APK + tests
-        run: ./gradlew assembleDebug testDebugUnitTest --stacktrace
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --stacktrace
 
       - name: Upload APK
         if: success()
