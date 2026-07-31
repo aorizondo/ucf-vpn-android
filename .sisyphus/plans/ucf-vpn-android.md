@@ -1164,19 +1164,19 @@ Wave FINAL (4 revisiones paralelas, luego ok usuario):
 
 ### Wave FINAL — Verificación
 
-- [ ] F1. **Plan Compliance Audit** — `oracle`
+- [x] F1. **Plan Compliance Audit** — `oracle`
   Leer el plan y el código final. Verificar que todos los "Must Have" están implementados. Buscar patrones prohibidos de "Must NOT Have". Verificar archivos de evidencia.
   Output: `Must Have [N/N] | Must NOT Have [N/N] | VERDICT: APPROVE/REJECT`
 
-- [ ] F2. **Code Quality Review** — `unspecified-high`
+- [x] F2. **Code Quality Review** — `unspecified-high`
   `./gradlew lint`, `./gradlew test`, revisar código por `as any`, `@Suppress`, comentarios excesivos, hardcodeo.
   Output: `Lint [PASS/FAIL] | Tests [N/N] | VERDICT`
 
-- [ ] F3. **Real Manual QA** — `unspecified-high` (+ `playwright` skill si hay UI web)
+- [x] F3. **Real Manual QA** — `unspecified-high` (+ `playwright` skill si hay UI web)
   Probar APK en emulator/device real. Verificar cada escenario QA de cada tarea. Probar stack completo.
   Output: `Scenarios [N/N pass] | Integration [N/N] | VERDICT`
 
-- [ ] F4. **Scope Fidelity Check** — `deep`
+- [x] F4. **Scope Fidelity Check** — `deep`
   Verificar que se construyó exactamente lo especificado (ni más, ni menos). Detectar scope creep.
   Output: `Tasks [N/N compliant] | Contamination [CLEAN] | VERDICT`
 

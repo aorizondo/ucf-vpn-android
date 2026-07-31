@@ -6,9 +6,9 @@
       "work_id": "ucf-vpn-android-d6e23428",
       "active_plan": "/home/antonio/Desarrollo/lab/ucf-vpn/.sisyphus/plans/ucf-vpn-android.md",
       "plan_name": "ucf-vpn-android",
-      "status": "active",
+      "status": "completed",
       "started_at": "2026-07-30T04:31:04.373Z",
-      "updated_at": "2026-07-30T07:36:20.846Z",
+      "updated_at": "2026-07-30T07:42:35.343Z",
       "session_ids": [
         "ses_05086ee36ffeDt4VWo3cRre02q"
       ],
@@ -80,13 +80,15 @@
           "ended_at": "2026-07-30T07:36:20.845Z",
           "elapsed_ms": 1683337
         }
-      }
+      },
+      "ended_at": "2026-07-30T07:42:35.343Z",
+      "elapsed_ms": 11490970
     }
   },
   "active_plan": "/home/antonio/Desarrollo/lab/ucf-vpn/.sisyphus/plans/ucf-vpn-android.md",
   "started_at": "2026-07-30T04:31:04.373Z",
-  "status": "active",
-  "updated_at": "2026-07-30T07:36:20.846Z",
+  "status": "completed",
+  "updated_at": "2026-07-30T07:42:35.343Z",
   "session_ids": [
     "ses_05086ee36ffeDt4VWo3cRre02q"
   ],
@@ -159,5 +161,7 @@
       "elapsed_ms": 1683337
     }
   },
-  "agent": "atlas"
+  "agent": "atlas",
+  "ended_at": "2026-07-30T07:42:35.343Z",
+  "elapsed_ms": 11490970
 }
