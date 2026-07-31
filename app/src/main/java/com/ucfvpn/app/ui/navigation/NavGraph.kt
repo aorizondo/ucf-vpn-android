@@ -22,8 +22,6 @@ import com.ucfvpn.app.ui.screens.ConfigScreen
 import com.ucfvpn.app.ui.screens.LogScreen
 import com.ucfvpn.app.ui.screens.StatusScreen
 import com.ucfvpn.app.ui.viewmodel.VpnViewModel
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Remove
 
 data class BottomNavItem(
     val label: String,

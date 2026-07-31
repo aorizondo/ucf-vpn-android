@@ -21,8 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -372,7 +371,7 @@ fun ConnectionIndicator(state: ConnectionState) {
                     )
                 }
                 Icon(
-                    imageVector = Icons.Default.MoreHoriz,
+                    imageVector = Icons.Default.Clear,
                     contentDescription = "Disconnected",
                     tint = VpnDisconnected,
                     modifier = Modifier.size(48.dp)
@@ -390,9 +389,9 @@ fun StackStageRow(label: String, icon: StackStageIcon) {
     ) {
         val (imageVector, tint) = when (icon) {
             StackStageIcon.DONE -> Icons.Default.Check to VpnConnected
-            StackStageIcon.IN_PROGRESS -> Icons.Default.MoreHoriz to VpnConnecting
+            StackStageIcon.IN_PROGRESS -> Icons.Default.Clear to VpnConnecting
             StackStageIcon.ERROR -> Icons.Default.Close to VpnError
-            StackStageIcon.PENDING -> Icons.Default.MoreHoriz to VpnDisconnected
+            StackStageIcon.PENDING -> Icons.Default.Clear to VpnDisconnected
         }
         Icon(
             imageVector = imageVector,
