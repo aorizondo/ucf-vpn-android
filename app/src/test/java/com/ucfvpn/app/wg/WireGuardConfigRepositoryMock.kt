@@ -21,7 +21,7 @@ class WireGuardConfigRepositoryMock : WireGuardConfigRepository {
             if (config.privateKey.isNotBlank()) {
                 this.privateKey = config.privateKey
             }
-            if (config.peerPresharedKey != null && config.peerPresharedKey.isNotBlank()) {
+            if (config.peerPresharedKey?.isNotBlank() == true) {
                 this.presharedKey = config.peerPresharedKey
             }
         }

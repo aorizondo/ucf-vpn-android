@@ -1,5 +1,6 @@
 package com.ucfvpn.app.wg
 
+import com.ucfvpn.app.wg.WireGuardConfig.Companion.isValid
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
