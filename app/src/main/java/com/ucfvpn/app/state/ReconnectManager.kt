@@ -6,7 +6,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import kotlin.math.min
 
 /**
@@ -44,8 +43,8 @@ class ReconnectManager(
     /**
      * Start the reconnect loop.
      */
-    suspend fun start() = withContext(mutex) {
-        if (isRunning) return@withContext
+    suspend fun start() = mutex.withLock {
+        if (isRunning) return@withLock
 
         isRunning = true
         currentAttempt = 0

@@ -171,7 +171,9 @@ data class SstpControlPacket(
                 offset += attrLen
             }
 
-            return SstpControlPacket(SstpMessageType(messageType), attrs)
+            val msgType = SstpMessageType.values().find { it.value == messageType }
+                ?: throw IllegalArgumentException("Unknown SSTP message type: $messageType")
+            return SstpControlPacket(msgType, attrs)
         }
     }
 }

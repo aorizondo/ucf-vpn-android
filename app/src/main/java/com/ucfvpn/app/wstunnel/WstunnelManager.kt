@@ -100,7 +100,7 @@ class WstunnelManager(private val context: Context) {
             stdoutThread = captureOutput(process!!.inputStream, "$TAG/stdout")
             stderrThread = captureOutput(process!!.errorStream, "$TAG/stderr")
 
-            Log.i(TAG, "wstunnel started (pid=${process?.pid})")
+            Log.i(TAG, "wstunnel started")
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start wstunnel", e)
@@ -126,7 +126,7 @@ class WstunnelManager(private val context: Context) {
         }
 
         _state.value = WstunnelState.STOPPING
-        Log.i(TAG, "Sending SIGTERM to wstunnel (pid=${p.pid})")
+        Log.i(TAG, "Sending SIGTERM to wstunnel")
         p.destroy()
 
         // Wait up to 3 s for graceful exit
