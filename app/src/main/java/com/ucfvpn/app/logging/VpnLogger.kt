@@ -43,6 +43,8 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object VpnLogger {
 
+    private const val DEFAULT_MAX_SIZE = 200
+
     // ── Core ────────────────────────────────────────────────────
 
     private val repository = LogRepository(DEFAULT_MAX_SIZE)
@@ -246,7 +248,7 @@ object VpnLogger {
             delay(stage.timeoutMs)
 
             val error = VpnError.Timeout(stage)
-            log(LogLevel.ERROR, stage.toLogCategory(), error.message, error = error)
+            log(LogLevel.ERROR, stage.toLogCategory(), error.message, vpnError = error)
 
             stateMachine?.let { machine ->
                 val errorState = stage.toErrorState(error.userFriendlyMessage)
@@ -274,15 +276,12 @@ object VpnLogger {
         // Timber output
         val tag = "UCF-${category.name}"
         when (level) {
-            LogLevel.DEBUG -> Timber.tag(tag).d { message }
-            LogLevel.INFO -> Timber.tag(tag).i { message }
-            LogLevel.WARN -> if (throwable != null) Timber.tag(tag).w(throwable) { message } else Timber.tag(tag).w { message }
-            LogLevel.ERROR -> if (throwable != null) Timber.tag(tag).e(throwable) { message } else Timber.tag(tag).e { message }
-            LogLevel.FATAL -> if (throwable != null) Timber.tag(tag).e(throwable) { message } else Timber.tag(tag).e { message }
+            LogLevel.DEBUG -> Timber.tag(tag).d(message)
+            LogLevel.INFO -> Timber.tag(tag).i(message)
+            LogLevel.WARN -> Timber.tag(tag).w(throwable, message)
+            LogLevel.ERROR -> Timber.tag(tag).e(throwable, message)
+            LogLevel.FATAL -> Timber.tag(tag).e(throwable, message)
         }
     }
 
-    // ── Constants ───────────────────────────────────────────────
-
-    private const val DEFAULT_MAX_SIZE = 200
 }
