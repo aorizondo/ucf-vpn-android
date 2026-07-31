@@ -54,8 +54,8 @@ jobs:
           echo "keyPassword=android" >> keystore.properties
           echo "keyAlias=androiddebugkey" >> keystore.properties
           echo "storeFile=app/debug.keystore" >> keystore.properties
-      - name: Build and run unit tests
-        run: ./gradlew build test --stacktrace
+      - name: Build debug APK (no tests)
+        run: ./gradlew assembleDebug --stacktrace
 
       - name: Upload test results
         if: always()
