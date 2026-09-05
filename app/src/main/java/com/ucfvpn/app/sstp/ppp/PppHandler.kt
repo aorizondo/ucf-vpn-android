@@ -164,9 +164,8 @@ object HDLCHandler {
 /**
  * Handles PPP frames between SSTP tunnel and lwIP stack.
  *
- * This is a placeholder PPP handler that handles HDLC framing only.
- * The actual PPP state machine (LCP, IPCP, PAP/MS-CHAPv2) will be
- * implemented in T6.
+ * Delegates LCP/PAP/IPCP negotiation to [PppStack]; HDLC framing for lwIP
+ * is handled by [HDLCHandler].
  *
  * @param username PPP username
  * @param password PPP password
@@ -180,17 +179,31 @@ class PPPHandler(
 
     var sendCallback: ((ByteArray) -> Unit)? = null
 
+    private val pppStack = PppStack().apply {
+        sendFrame = { frame -> sendCallback?.invoke(frame) }
+    }
+
     /**
      * Handle raw PPP frame received from SSTP tunnel.
-     * Decode HDLC → feed to lwIP (placeholder: HDLC encode + callback stub).
+     * Feed to the PPP stack for LCP/PAP/IPCP negotiation.
      */
     fun handlePppFrameFromSstp(rawFrame: ByteArray) {
-        Timber.d("Handling PPP frame from SSTP (%d bytes): %s", rawFrame.size, rawFrame.toHexString())
-        // Wrap raw frame into HDLC for lwIP
-        val hdlcFrame = HDLCHandler.encode(rawFrame)
-        // PPP frame HDLC-encoded; SSTP send via callback handled in SstpTunnelImpl
-        Timber.d("HDLC encode produced %d bytes", hdlcFrame.size)
-        sendCallback?.invoke(hdlcFrame)
+        Timber.d("Handling PPP frame from SSTP (%d bytes)", rawFrame.size)
+        pppStack.handleFrame(rawFrame)
+    }
+
+    /**
+     * Negotiate PPP (LCP → PAP → IPCP).
+     *
+     * @return the negotiated IP configuration, or a failure with a
+     * [PppNegotiationException] if negotiation could not complete
+     */
+    suspend fun negotiate(): Result<PppResult> {
+        val result = pppStack.negotiate(username, password)
+        result.onSuccess {
+            pppConnected = true
+        }
+        return result
     }
 
     /**

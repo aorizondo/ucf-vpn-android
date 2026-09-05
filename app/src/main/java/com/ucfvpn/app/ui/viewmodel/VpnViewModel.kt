@@ -23,6 +23,7 @@ data class UiConfig(
     val sstpUsername: String = "",
     val sstpPassword: String = "",
     // Proxy
+    val proxyType: ProxyType = ProxyType.HTTP,
     val proxyHost: String = "10.14.0.13",
     val proxyPort: Int = 3128,
     val proxyUsername: String = "",
@@ -35,19 +36,31 @@ data class UiConfig(
     val wstunnelRemotePort: Int = 51820,
     val wstunnelWsPingFrequency: String = "10s",
     val wstunnelRetryMaxBackoff: String = "10s",
+    // Split Tunnel
+    val privateNetworks: String = "10.0.0.0/8,192.168.0.0/16,172.16.0.0/12",
+    val bypassApps: String = "",
+    val defaultViaProxy: Boolean = true,
     // WireGuard
     val wireGuardEndpoint: String = "127.0.0.1:51820",
     val wireGuardLocalIp: String = "10.8.0.2/24",
     val wireGuardDns: String = "1.1.1.1",
     // General
     val ignoreSslErrors: Boolean = true,
-    val autoReconnect: Boolean = true
+    val autoReconnect: Boolean = true,
+    // Debug
+    val debugWstunnelSocks5: Boolean = false
 ) {
     /**
      * Convert UI config to the wstunnel domain model.
      * [WstunnelMode.FIXED] uses hardcoded defaults from the original
      * pre-up.sh command. [WstunnelMode.DYNAMIC] forwards all
      * user-customised parameters.
+     *
+     * Proxy credentials are forwarded as [WstunnelConfig.proxyAuth]
+     * (`user:pass`). Note: wstunnel v10.5.1 `-p` only supports HTTP proxy
+     * (`http://user:pass@host:port`); [ProxyType.SOCKS5] is persisted and
+     * displayed in the UI but the real connection always uses the HTTP
+     * proxy format (binary limitation, documented in Fase 3 of the notepad).
      */
     fun toWstunnelConfig(): WstunnelConfig {
         val mode = if (wstunnelMode == WstunnelMode.DYNAMIC)
@@ -61,6 +74,7 @@ data class UiConfig(
             serverUrl = wstunnelUrl,
             proxyHost = proxyHost,
             proxyPort = proxyPort,
+            proxyAuth = if (proxyUsername.isNotBlank()) "$proxyUsername:$proxyPassword" else null,
             retryMaxBackoff = wstunnelRetryMaxBackoff,
             websocketPingFrequency = wstunnelWsPingFrequency
         )
@@ -70,6 +84,12 @@ data class UiConfig(
 enum class WstunnelMode(val displayName: String) {
     FIXED("Fixed"),
     DYNAMIC("Dynamic")
+}
+
+/** Proxy protocol type for the outbound HTTP proxy (Fase 6). */
+enum class ProxyType(val displayName: String) {
+    HTTP("HTTP"),
+    SOCKS5("SOCKS5")
 }
 class VpnViewModel(
     application: Application,

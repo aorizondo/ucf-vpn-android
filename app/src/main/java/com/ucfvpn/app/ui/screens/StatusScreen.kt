@@ -65,6 +65,10 @@ enum class StackStageIcon {
 /**
  * Compute the stack stages based on the current [VpnState].
  * Shows which layers are done, in progress, or errored.
+ *
+ * Stack: SSTP → PPP → Proxy Auth → wstunnel → VPN (Fase 5).
+ * Error mapping: each layer's own error → ERROR; errors of earlier layers →
+ * PENDING (never reached); errors of later layers → DONE (already completed).
  */
 fun computeStackStages(vpnState: VpnState): List<Pair<String, StackStageIcon>> {
     return listOf(
@@ -72,6 +76,8 @@ fun computeStackStages(vpnState: VpnState): List<Pair<String, StackStageIcon>> {
             is VpnState.Disconnected -> StackStageIcon.PENDING
             is VpnState.SstpConnecting -> StackStageIcon.IN_PROGRESS
             is VpnState.SstpConnected -> StackStageIcon.DONE
+            is VpnState.PppNegotiating -> StackStageIcon.DONE
+            is VpnState.PppAuthenticated -> StackStageIcon.DONE
             is VpnState.ProxyAuthenticating -> StackStageIcon.DONE
             is VpnState.ProxyAuthenticated -> StackStageIcon.DONE
             is VpnState.WstunnelStarting -> StackStageIcon.DONE
@@ -81,12 +87,35 @@ fun computeStackStages(vpnState: VpnState): List<Pair<String, StackStageIcon>> {
             is VpnState.VpnStarting -> StackStageIcon.DONE
             is VpnState.VpnRunning -> StackStageIcon.DONE
             is VpnState.SstpError -> StackStageIcon.ERROR
-            else -> StackStageIcon.PENDING
+            is VpnState.ProxyError -> StackStageIcon.DONE
+            is VpnState.WstunnelError -> StackStageIcon.DONE
+            is VpnState.WireGuardError -> StackStageIcon.DONE
+        },
+        "PPP" to when (vpnState) {
+            is VpnState.Disconnected,
+            is VpnState.SstpConnecting,
+            is VpnState.SstpConnected -> StackStageIcon.PENDING
+            is VpnState.PppNegotiating -> StackStageIcon.IN_PROGRESS
+            is VpnState.PppAuthenticated -> StackStageIcon.DONE
+            is VpnState.ProxyAuthenticating -> StackStageIcon.DONE
+            is VpnState.ProxyAuthenticated -> StackStageIcon.DONE
+            is VpnState.WstunnelStarting -> StackStageIcon.DONE
+            is VpnState.WstunnelRunning -> StackStageIcon.DONE
+            is VpnState.WireGuardConnecting -> StackStageIcon.DONE
+            is VpnState.WireGuardConnected -> StackStageIcon.DONE
+            is VpnState.VpnStarting -> StackStageIcon.DONE
+            is VpnState.VpnRunning -> StackStageIcon.DONE
+            is VpnState.SstpError -> StackStageIcon.ERROR
+            is VpnState.ProxyError -> StackStageIcon.DONE
+            is VpnState.WstunnelError -> StackStageIcon.DONE
+            is VpnState.WireGuardError -> StackStageIcon.DONE
         },
         "Proxy Auth" to when (vpnState) {
             is VpnState.Disconnected,
             is VpnState.SstpConnecting,
-            is VpnState.SstpConnected -> StackStageIcon.PENDING
+            is VpnState.SstpConnected,
+            is VpnState.PppNegotiating,
+            is VpnState.PppAuthenticated -> StackStageIcon.PENDING
             is VpnState.ProxyAuthenticating -> StackStageIcon.IN_PROGRESS
             is VpnState.ProxyAuthenticated -> StackStageIcon.DONE
             is VpnState.WstunnelStarting -> StackStageIcon.DONE
@@ -95,13 +124,17 @@ fun computeStackStages(vpnState: VpnState): List<Pair<String, StackStageIcon>> {
             is VpnState.WireGuardConnected -> StackStageIcon.DONE
             is VpnState.VpnStarting -> StackStageIcon.DONE
             is VpnState.VpnRunning -> StackStageIcon.DONE
+            is VpnState.SstpError -> StackStageIcon.PENDING
             is VpnState.ProxyError -> StackStageIcon.ERROR
-            else -> StackStageIcon.PENDING
+            is VpnState.WstunnelError -> StackStageIcon.DONE
+            is VpnState.WireGuardError -> StackStageIcon.DONE
         },
         "wstunnel" to when (vpnState) {
             is VpnState.Disconnected,
             is VpnState.SstpConnecting,
             is VpnState.SstpConnected,
+            is VpnState.PppNegotiating,
+            is VpnState.PppAuthenticated,
             is VpnState.ProxyAuthenticating,
             is VpnState.ProxyAuthenticated -> StackStageIcon.PENDING
             is VpnState.WstunnelStarting -> StackStageIcon.IN_PROGRESS
@@ -110,28 +143,29 @@ fun computeStackStages(vpnState: VpnState): List<Pair<String, StackStageIcon>> {
             is VpnState.WireGuardConnected -> StackStageIcon.DONE
             is VpnState.VpnStarting -> StackStageIcon.DONE
             is VpnState.VpnRunning -> StackStageIcon.DONE
+            is VpnState.SstpError -> StackStageIcon.PENDING
+            is VpnState.ProxyError -> StackStageIcon.PENDING
             is VpnState.WstunnelError -> StackStageIcon.ERROR
-            else -> StackStageIcon.PENDING
-        },
-        "WireGuard" to when (vpnState) {
-            is VpnState.Disconnected,
-            is VpnState.SstpConnecting,
-            is VpnState.SstpConnected,
-            is VpnState.ProxyAuthenticating,
-            is VpnState.ProxyAuthenticated,
-            is VpnState.WstunnelStarting,
-            is VpnState.WstunnelRunning -> StackStageIcon.PENDING
-            is VpnState.WireGuardConnecting -> StackStageIcon.IN_PROGRESS
-            is VpnState.WireGuardConnected -> StackStageIcon.DONE
-            is VpnState.VpnStarting -> StackStageIcon.DONE
-            is VpnState.VpnRunning -> StackStageIcon.DONE
-            is VpnState.WireGuardError -> StackStageIcon.ERROR
-            else -> StackStageIcon.PENDING
+            is VpnState.WireGuardError -> StackStageIcon.DONE
         },
         "VPN" to when (vpnState) {
             is VpnState.VpnStarting -> StackStageIcon.IN_PROGRESS
             is VpnState.VpnRunning -> StackStageIcon.DONE
-            else -> StackStageIcon.PENDING
+            is VpnState.WireGuardError -> StackStageIcon.ERROR
+            is VpnState.Disconnected,
+            is VpnState.SstpConnecting,
+            is VpnState.SstpConnected,
+            is VpnState.PppNegotiating,
+            is VpnState.PppAuthenticated,
+            is VpnState.ProxyAuthenticating,
+            is VpnState.ProxyAuthenticated,
+            is VpnState.WstunnelStarting,
+            is VpnState.WstunnelRunning,
+            is VpnState.WireGuardConnecting,
+            is VpnState.WireGuardConnected,
+            is VpnState.SstpError,
+            is VpnState.ProxyError,
+            is VpnState.WstunnelError -> StackStageIcon.PENDING
         }
     )
 }

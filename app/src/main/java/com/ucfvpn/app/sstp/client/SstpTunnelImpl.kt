@@ -8,6 +8,7 @@ import com.ucfvpn.app.sstp.protocol.createCallConnected
 import com.ucfvpn.app.sstp.protocol.createCryptoBindingAttribute
 import com.ucfvpn.app.sstp.protocol.createEchoRequest
 import com.ucfvpn.app.sstp.protocol.createPppDataPacket
+import com.ucfvpn.app.sstp.ppp.PppStack
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -27,8 +28,25 @@ import javax.crypto.spec.SecretKeySpec
 /**
  * Complete SSTP tunnel implementation.
  * Manages the SSL/TLS connection, SSTP handshake, and PPP frame transport.
+ *
+ * @param username PPP username used for PAP authentication
+ * @param password PPP password used for PAP authentication
  */
-class SstpTunnelImpl : SstpTunnel {
+class SstpTunnelImpl(
+    private val username: String = "",
+    private val password: String = "",
+    /**
+     * When true (legacy default) the TLS handshake accepts any certificate
+     * (VERIFY_NONE). When false the system default trust manager is used.
+     * Configurable at runtime via [configure].
+     */
+    private var ignoreSslErrors: Boolean = true,
+    /**
+     * Optional protector invoked on the TCP socket BEFORE it connects so the
+     * SSTP traffic bypasses the VPN tunnel. Configurable at runtime via [configure].
+     */
+    private var socketProtector: SocketProtector? = null
+) : SstpTunnel {
 
     companion object {
         private const val SERVER = "npv.ucf.edu.cu"
@@ -66,10 +84,29 @@ class SstpTunnelImpl : SstpTunnel {
     private var receiveJob: Job? = null
     private var keepaliveJob: Job? = null
 
+    // PPP negotiation stack (LCP → PAP → IPCP)
+    private var pppStack: PppStack? = null
+
     // MPPE keys for crypto binding (set after PPP auth)
     private var sendKey: ByteArray? = null
     private var recvKey: ByteArray? = null
     private var masterKey: ByteArray? = null
+
+    /**
+     * Configure TLS certificate validation and socket protection.
+     *
+     * Called by the orchestrator before [connect] so the flag and protector
+     * flow from the app configuration down to the handshake.
+     *
+     * @param ignoreSslErrors when true the TLS handshake accepts any certificate
+     *   (VERIFY_NONE, legacy default); when false the system trust manager is used.
+     * @param socketProtector invoked on the TCP socket BEFORE it connects so the
+     *   SSTP traffic bypasses the VPN tunnel (prevents a traffic loop).
+     */
+    fun configure(ignoreSslErrors: Boolean, socketProtector: SocketProtector?) {
+        this.ignoreSslErrors = ignoreSslErrors
+        this.socketProtector = socketProtector
+    }
 
     /**
      * Connect callbacks.
@@ -107,18 +144,44 @@ class SstpTunnelImpl : SstpTunnel {
             Timber.d("Connecting to SSTP server $serverAddress:$serverPort")
 
             // Create handshake and connect
-            handshake = SstpHandshake(serverAddress, serverPort).also { hs ->
+            handshake = SstpHandshake(
+                serverAddress,
+                serverPort,
+                username,
+                password,
+                ignoreSslErrors = ignoreSslErrors,
+                socketProtector = socketProtector
+            ).also { hs ->
                 hs.connect()
             }
-
-            // Send CALL_CONNECTED with crypto binding after PPP auth succeeds
-            // For now, send with null HLAK (no MPPE keys yet)
-            sendCallConnected(null, null, null)
 
             state = SstpState.CONNECTED
 
             // Start receive loop
             startReceiveLoop()
+
+            // Negotiate PPP (LCP → PAP → IPCP)
+            val stack = PppStack().apply {
+                sendFrame = { frame -> sendPppFrame(frame) }
+            }
+            pppStack = stack
+
+            val result = stack.negotiate(username, password)
+            result.fold(
+                onSuccess = { ppp ->
+                    Timber.d(
+                        "PPP negotiation complete: localIp=%s dns1=%s dns2=%s gateway=%s",
+                        ppp.localIp, ppp.dns1, ppp.dns2, ppp.gateway
+                    )
+                    localAddress = ppp.localIp
+                    // Send CALL_CONNECTED with crypto binding after PPP auth succeeds
+                    onPppAuthSuccess(null, null, null)
+                },
+                onFailure = { e ->
+                    Timber.e(e, "PPP negotiation failed")
+                    throw e
+                }
+            )
 
             // Start keepalive
             startKeepalive()
@@ -144,7 +207,6 @@ class SstpTunnelImpl : SstpTunnel {
 
         // 1. Export MK from TLS session
         val mk = hs.exportKeyingMaterial("SSTP Key Binding", 32)
-        Timber.d("TLS Master Key (MK): ${mk.toHexString()}")
 
         // 2. HLAK = SendKey + RecvKey (16 bytes each)
         val hlak = if (sendKey != null && recvKey != null && sendKey.size >= 16 && recvKey.size >= 16) {
@@ -153,12 +215,11 @@ class SstpTunnelImpl : SstpTunnel {
             Timber.d("Using null HLAK (no MPPE keys)")
             ByteArray(32) { 0 }
         }
-        Timber.d("HLAK (Send+Recv): ${hlak.toHexString()}")
 
         // 3. Derive CMK: HMAC-SHA1(MK, "SSTP inner method derived CMK\0" + HLAK)
         val cmkData = "SSTP inner method derived CMK\u0000".toByteArray() + hlak
         val cmk = hmacSha1(mk, cmkData)
-        Timber.d("Derived Precision CMK (SHA1): ${cmk.toHexString()}")
+        Timber.d("Crypto binding keys derived (MK/HLAK/CMK)")
 
         // 4. Certificate Hash (SHA1, padded to 32 bytes)
         val cert = hs.getPeerCertificate()
@@ -185,7 +246,7 @@ class SstpTunnelImpl : SstpTunnel {
 
         // 7. Final packet
         val callConnected = sstpHeader + controlHeader + attrHeader + attrValuePrefix + mac
-        Timber.d("Sending CALL_CONNECTED with MAC (SHA1): ${mac.toHexString()}")
+        Timber.d("Sending CALL_CONNECTED with crypto binding MAC")
         hs.send(callConnected)
     }
 
@@ -244,6 +305,7 @@ class SstpTunnelImpl : SstpTunnel {
         } else {
             // Data packet - contains PPP frame
             Timber.d("Received PPP data packet (${packet.data.size} bytes)")
+            pppStack?.handleFrame(packet.data)
             onPppFrameReceived?.invoke(packet.data)
             callbacks?.onPppFrameReceived(packet.data)
         }
@@ -377,6 +439,10 @@ class SstpTunnelImpl : SstpTunnel {
                 keepaliveJob?.cancel()
                 receiveJob?.cancel()
 
+                // Stop PPP negotiation stack
+                pppStack?.close()
+                pppStack = null
+
                 // Send CALL_DISCONNECT
                 withContext(Dispatchers.IO) {
                     try {
@@ -425,6 +491,20 @@ class SstpTunnelImpl : SstpTunnel {
                 Timber.e(e, "Error sending PPP frame")
                 callbacks?.onError(e)
             }
+        }
+    }
+
+    /**
+     * Send a raw PPP frame synchronously through the SSTP tunnel.
+     * Used by the PPP stack during LCP/PAP/IPCP negotiation.
+     */
+    private fun sendPppFrame(frame: ByteArray) {
+        val hs = handshake ?: return
+        try {
+            val packet = createPppDataPacket(frame)
+            hs.send(packet)
+        } catch (e: Exception) {
+            Timber.e(e, "Error sending PPP frame")
         }
     }
 

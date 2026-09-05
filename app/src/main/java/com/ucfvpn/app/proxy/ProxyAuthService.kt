@@ -1,5 +1,6 @@
 package com.ucfvpn.app.proxy
 
+import com.ucfvpn.app.vpn.VpnGatewayService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -135,6 +136,37 @@ class ProxyAuthService(
         storedUsername = null
         storedPassword = null
         _authState.value = ProxyAuthState.IDLE
+    }
+
+    /**
+     * Reference to the active [VpnGatewayService], kept for future split-tunnel
+     * route exclusion.
+     *
+     * ## Why protect() is intentionally NOT used here
+     *
+     * The captive portal traffic (internet.ucf.edu.cu) must flow through the
+     * system network (before the VPN is up) or through SSTP (after the VPN is
+     * up) — never straight through the TUN to the Internet:
+     * - Before the VPN: portal traffic flows inside the SSTP tunnel (whose socket
+     *   is protected by [VpnGatewayService.protectSocket]), reaching the portal
+     *   via the UCF network.
+     * - After the VPN: portal traffic is routed through the TUN and exits via
+     *   SSTP thanks to the static routes added in
+     *   [VpnGatewayService.establishTunInterface].
+     *
+     * Calling protect() here would pin portal traffic to the physical network at
+     * all times, which breaks re-authentication when the device is outside the
+     * UCF network (the portal is only reachable via SSTP in that case).
+     */
+    private var vpnService: VpnGatewayService? = null
+
+    /**
+     * Sets the VPN gateway service reference for future route exclusion.
+     *
+     * @param vpnService The active [VpnGatewayService], or null to clear it.
+     */
+    fun setVpnService(vpnService: VpnGatewayService?) {
+        this.vpnService = vpnService
     }
 
     // ── Private helpers ──

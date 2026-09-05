@@ -41,9 +41,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.ucfvpn.app.ui.viewmodel.ProxyType
 import com.ucfvpn.app.ui.viewmodel.UiConfig
 import com.ucfvpn.app.ui.viewmodel.VpnViewModel
 import com.ucfvpn.app.ui.viewmodel.WstunnelMode
+import com.ucfvpn.app.vpn.parseCidr
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -53,6 +55,7 @@ fun ConfigScreen(viewModel: VpnViewModel) {
     var sstpExpanded by remember { mutableStateOf(true) }
     var proxyExpanded by remember { mutableStateOf(false) }
     var wstunnelExpanded by remember { mutableStateOf(false) }
+    var splitTunnelExpanded by remember { mutableStateOf(false) }
     var wireguardExpanded by remember { mutableStateOf(false) }
   // Sync currentConfig with ViewModel's saved state on first composition
     LaunchedEffect(Unit) {
@@ -119,6 +122,26 @@ fun ConfigScreen(viewModel: VpnViewModel) {
                 expanded = proxyExpanded,
                 onToggle = { proxyExpanded = !proxyExpanded }
             ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Type: ${currentConfig.proxyType.displayName}")
+                    Row {
+                        OutlinedButton(onClick = {
+                            currentConfig = currentConfig.copy(proxyType = ProxyType.HTTP)
+                        }) {
+                            Text("HTTP")
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        OutlinedButton(onClick = {
+                            currentConfig = currentConfig.copy(proxyType = ProxyType.SOCKS5)
+                        }) {
+                            Text("SOCKS5")
+                        }
+                    }
+                }
                 OutlinedTextField(
                     value = currentConfig.proxyHost,
                     onValueChange = { currentConfig = currentConfig.copy(proxyHost = it) },
@@ -244,6 +267,33 @@ fun ConfigScreen(viewModel: VpnViewModel) {
                         singleLine = true
                     )
                 }
+            }
+
+            // Split Tunnel Section
+            CollapsibleSection(
+                title = "Split Tunnel Configuration",
+                expanded = splitTunnelExpanded,
+                onToggle = { splitTunnelExpanded = !splitTunnelExpanded }
+            ) {
+                OutlinedTextField(
+                    value = currentConfig.privateNetworks,
+                    onValueChange = { currentConfig = currentConfig.copy(privateNetworks = it) },
+                    label = { Text("Private Networks (CIDR, comma-separated)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = currentConfig.bypassApps,
+                    onValueChange = { currentConfig = currentConfig.copy(bypassApps = it) },
+                    label = { Text("Bypass Apps (package names, comma-separated)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                SwitchRow(
+                    label = "Default via proxy",
+                    checked = currentConfig.defaultViaProxy,
+                    onCheckedChange = { currentConfig = currentConfig.copy(defaultViaProxy = it) }
+                )
             }
 
             // WireGuard Section
@@ -381,6 +431,18 @@ private fun validateConfig(config: UiConfig): Boolean {
         if (config.wstunnelRemotePort !in 1..65535) return false
         if (config.wstunnelWsPingFrequency.isBlank()) return false
         if (config.wstunnelRetryMaxBackoff.isBlank()) return false
+    }
+    // Split tunnel validation — each private network entry must be a valid CIDR
+    // (empty input is allowed: buildAppConfig falls back to defaults)
+    val networks = config.privateNetworks.split(',')
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+    for (cidr in networks) {
+        try {
+            parseCidr(cidr)
+        } catch (_: IllegalArgumentException) {
+            return false
+        }
     }
     return true
 }

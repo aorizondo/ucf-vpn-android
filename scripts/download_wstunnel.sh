@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# download_wstunnel.sh — fetch the wstunnel ARM64 binary for Android
+# download_wstunnel.sh — fetch the wstunnel binaries for Android
 # ============================================================================
 #
 # Usage:
@@ -8,12 +8,20 @@
 #
 # Default version: 10.5.1
 #
-# Downloads the static linux-arm64 binary from GitHub Releases and places
-# it at  app/src/main/assets/wstunnel_arm64  where the Android build system
-# expects it.
+# The app embeds two wstunnel binaries in app/src/main/assets/:
+#   - wstunnel_arm64  (64-bit ARM, arm64-v8a)
+#   - wstunnel_armv7  (32-bit ARM, armeabi-v7a)
 #
-# The binary is statically linked (musl) so it runs on Android without
-# additional shared libraries.
+# The official GitHub Release only ships an Android asset for arm64, so:
+#   - wstunnel_arm64 is downloaded here from the official release (static
+#     linux-arm64 binary, runs on Android without shared libraries).
+#   - wstunnel_armv7 has NO official Android asset — it is compiled from
+#     source in CI (see .github/workflows/build-wstunnel.yml) and copied
+#     into assets/ by .github/workflows/build.yml before the APK build.
+#
+# To fetch the CI-compiled binaries locally instead, download the
+# `wstunnel-android-binaries` artifact from a GitHub Actions run and copy
+# both files into app/src/main/assets/.
 # ============================================================================
 
 set -euo pipefail

@@ -1,5 +1,6 @@
 package com.ucfvpn.app.state
 
+import com.ucfvpn.app.wstunnel.TunnelType
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -108,8 +109,8 @@ class VpnOrchestrator(
                 currentState == VpnState.SstpConnected -> VpnState.SstpError(reason)
                 currentState == VpnState.ProxyAuthenticating ||
                 currentState == VpnState.ProxyAuthenticated -> VpnState.ProxyError(reason)
-                currentState == VpnState.WstunnelStarting ||
-                currentState == VpnState.WstunnelRunning -> VpnState.WstunnelError(reason)
+                currentState is VpnState.WstunnelStarting ||
+                currentState is VpnState.WstunnelRunning -> VpnState.WstunnelError(reason)
                 currentState == VpnState.WireGuardConnecting ||
                 currentState == VpnState.WireGuardConnected -> VpnState.WireGuardError(reason)
                 else -> VpnState.SstpError(reason)
@@ -166,7 +167,7 @@ class VpnOrchestrator(
             stateMachine.transition(VpnState.ProxyAuthenticated)
 
             // Step 4: wstunnel startup
-            stateMachine.transition(VpnState.WstunnelStarting)
+            stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
             val wsResult = withTimeoutOrNull(handlers.wstunnelTimeoutMs) {
                 handlers.startWstunnel()
             } ?: ConnectionResult.Failure("wstunnel startup timed out")
@@ -177,7 +178,7 @@ class VpnOrchestrator(
                 _connectionResult.value = wsResult
                 return
             }
-            stateMachine.transition(VpnState.WstunnelRunning)
+            stateMachine.transition(VpnState.WstunnelRunning(1080))
 
             // Step 5: WireGuard configuration and connection
             stateMachine.transition(VpnState.WireGuardConnecting)
@@ -281,7 +282,7 @@ class VpnOrchestrator(
             stateMachine.transition(VpnState.ProxyAuthenticated)
 
             // Retry wstunnel
-            stateMachine.transition(VpnState.WstunnelStarting)
+            stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
             val wsResult = withTimeoutOrNull(handlers.wstunnelTimeoutMs) {
                 handlers.startWstunnel()
             } ?: ConnectionResult.Failure("wstunnel restart timed out")
@@ -289,7 +290,7 @@ class VpnOrchestrator(
             if (wsResult !is ConnectionResult.Success) {
                 throw RuntimeException((wsResult as ConnectionResult.Failure).message)
             }
-            stateMachine.transition(VpnState.WstunnelRunning)
+            stateMachine.transition(VpnState.WstunnelRunning(1080))
 
             // Retry WireGuard
             stateMachine.transition(VpnState.WireGuardConnecting)

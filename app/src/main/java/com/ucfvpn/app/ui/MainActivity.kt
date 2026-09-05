@@ -3,43 +3,66 @@ package com.ucfvpn.app.ui
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import com.ucfvpn.app.ui.theme.UcfVpnTheme
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 
+import com.ucfvpn.app.orchestrator.VpnOrchestrator
+import com.ucfvpn.app.proxy.ProxyAuthService
+import com.ucfvpn.app.sstp.client.SstpTunnelImpl
+import com.ucfvpn.app.ui.navigation.AppNavHost
+import com.ucfvpn.app.ui.theme.UcfVpnTheme
+import com.ucfvpn.app.ui.viewmodel.VpnViewModel
+import com.ucfvpn.app.wstunnel.WstunnelManager
+
+/**
+ * Main entry point for the UCF VPN application.
+ *
+ * Wires the real [VpnViewModel] backed by a production [VpnOrchestrator] with
+ * concrete dependencies:
+ * - [SstpTunnelImpl] — SSTP client with default settings (SSL errors ignored,
+ *   socket protector null). Credentials are injected at connect-time via
+ *   [VpnOrchestrator.performConnectionSequence].
+ * - [ProxyAuthService] — captive-portal authenticator with default UCF endpoint.
+ * - [WstunnelManager] — WebSocket tunnel process manager.
+ *
+ * ### Pending: VpnGatewayService wiring
+ * The [VpnOrchestrator] accepts `vpnService = null` on construction. The actual
+ * [com.ucfvpn.app.service.VpnGatewayService] (Android VpnService) must be bound
+ * at runtime via `ServiceConnection` when the user initiates a connection. This
+ * is documented in `.omo/notepads/ucf-vpn-split-tunnel/learnings.md` (line 257)
+ * and is intentionally left as a follow-up task — the orchestrator gracefully
+ * handles a null service reference via fail-open socket protection.
+ */
 class MainActivity : ComponentActivity() {
+
+    /**
+     * Lazily constructed [VpnViewModel] whose [VpnOrchestrator] is built with
+     * real, production dependencies. The orchestrator's lifecycle is managed by
+     * the ViewModel: [VpnViewModel.onCleared] calls [VpnOrchestrator.shutdown].
+     */
+    private val viewModel: VpnViewModel by lazy {
+        val app = application
+        val orchestrator = VpnOrchestrator(
+            context = app,
+            sstpTunnel = SstpTunnelImpl(),
+            proxyAuthService = ProxyAuthService(),
+            wstunnelManager = WstunnelManager(app)
+            // vpnService = null — VpnGatewayService bind is a runtime concern
+        )
+        val factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                return VpnViewModel(app, orchestrator) as T
+            }
+        }
+        ViewModelProvider(this, factory)[VpnViewModel::class.java]
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         setContent {
             UcfVpnTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    Column(
-                        modifier = Modifier.fillMaxSize().padding(32.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            text = "UCF VPN",
-                            style = MaterialTheme.typography.headlineLarge
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Stacked VPN Client",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(24.dp))
-                        Text(
-                            text = "SSTP → Proxy Auth → wstunnel → WireGuard",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                }
+                AppNavHost(viewModel = viewModel)
             }
         }
     }

@@ -2,19 +2,44 @@ package com.ucfvpn.app.prefs
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
+import com.ucfvpn.app.ui.viewmodel.ProxyType
 import com.ucfvpn.app.ui.viewmodel.UiConfig
 import com.ucfvpn.app.ui.viewmodel.WstunnelMode
 
 /**
- * Persists [UiConfig] to [SharedPreferences] so that the user's
+ * Persists [UiConfig] to encrypted [SharedPreferences] so that the user's
  * wstunnel dynamic settings survive process restarts.
  *
- * All keys are prefixed with `ucf_` to avoid collisions.
+ * Credentials (SSTP password, proxy password) are stored encrypted via
+ * [EncryptedSharedPreferences] (MasterKey AES256_GCM + AES256_SIV key
+ * encryption), following the pattern of
+ * [com.ucfvpn.app.wg.WireGuardConfigRepositoryImpl].
+ *
+ * All keys are prefixed with `ucf_` to avoid collisions. The prefs file name
+ * and keys are unchanged from the legacy plain SharedPreferences so all
+ * callers keep working with the same identifiers (values previously stored
+ * in plain text are not migrated: EncryptedSharedPreferences uses its own
+ * encrypted format and falls back to defaults for legacy entries).
  */
 class ConfigPreferences(context: Context) {
 
-    private val prefs: SharedPreferences =
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val prefs: SharedPreferences
+
+    init {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+
+        prefs = EncryptedSharedPreferences.create(
+            context,
+            PREFS_NAME,
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    }
 
     /** Load a saved [UiConfig], falling back to defaults when no value exists. */
     fun load(): UiConfig {
@@ -27,6 +52,10 @@ class ConfigPreferences(context: Context) {
             proxyPort = prefs.getInt(KEY_PROXY_PORT, DEFAULT.proxyPort),
             proxyUsername = prefs.getString(KEY_PROXY_USERNAME, null) ?: DEFAULT.proxyUsername,
             proxyPassword = prefs.getString(KEY_PROXY_PASSWORD, null) ?: DEFAULT.proxyPassword,
+            proxyType = parseProxyType(
+                prefs.getString(KEY_PROXY_TYPE, DEFAULT.proxyType.name)
+                    ?: DEFAULT.proxyType.name
+            ),
             wstunnelUrl = prefs.getString(KEY_WS_URL, null) ?: DEFAULT.wstunnelUrl,
             wstunnelMode = parseWstunnelMode(
                 prefs.getString(KEY_WS_MODE, DEFAULT.wstunnelMode.name)
@@ -39,6 +68,9 @@ class ConfigPreferences(context: Context) {
                 ?: DEFAULT.wstunnelWsPingFrequency,
             wstunnelRetryMaxBackoff = prefs.getString(KEY_WS_RETRY_BACKOFF, null)
                 ?: DEFAULT.wstunnelRetryMaxBackoff,
+            privateNetworks = prefs.getString(KEY_PRIVATE_NETWORKS, null) ?: DEFAULT.privateNetworks,
+            bypassApps = prefs.getString(KEY_BYPASS_APPS, null) ?: DEFAULT.bypassApps,
+            defaultViaProxy = prefs.getBoolean(KEY_DEFAULT_VIA_PROXY, DEFAULT.defaultViaProxy),
             wireGuardEndpoint = prefs.getString(KEY_WG_ENDPOINT, null) ?: DEFAULT.wireGuardEndpoint,
             wireGuardLocalIp = prefs.getString(KEY_WG_LOCAL_IP, null) ?: DEFAULT.wireGuardLocalIp,
             wireGuardDns = prefs.getString(KEY_WG_DNS, null) ?: DEFAULT.wireGuardDns,
@@ -58,6 +90,7 @@ class ConfigPreferences(context: Context) {
             .putInt(KEY_PROXY_PORT, config.proxyPort)
             .putString(KEY_PROXY_USERNAME, config.proxyUsername)
             .putString(KEY_PROXY_PASSWORD, config.proxyPassword)
+            .putString(KEY_PROXY_TYPE, config.proxyType.name)
             .putString(KEY_WS_URL, config.wstunnelUrl)
             .putString(KEY_WS_MODE, config.wstunnelMode.name)
             .putInt(KEY_WS_LOCAL_PORT, config.wstunnelLocalPort)
@@ -65,6 +98,9 @@ class ConfigPreferences(context: Context) {
             .putInt(KEY_WS_REMOTE_PORT, config.wstunnelRemotePort)
             .putString(KEY_WS_PING_FREQ, config.wstunnelWsPingFrequency)
             .putString(KEY_WS_RETRY_BACKOFF, config.wstunnelRetryMaxBackoff)
+            .putString(KEY_PRIVATE_NETWORKS, config.privateNetworks)
+            .putString(KEY_BYPASS_APPS, config.bypassApps)
+            .putBoolean(KEY_DEFAULT_VIA_PROXY, config.defaultViaProxy)
             .putString(KEY_WG_ENDPOINT, config.wireGuardEndpoint)
             .putString(KEY_WG_LOCAL_IP, config.wireGuardLocalIp)
             .putString(KEY_WG_DNS, config.wireGuardDns)
@@ -80,6 +116,13 @@ class ConfigPreferences(context: Context) {
             DEFAULT.wstunnelMode
         }
 
+    private fun parseProxyType(name: String): ProxyType =
+        try {
+            ProxyType.valueOf(name)
+        } catch (_: IllegalArgumentException) {
+            DEFAULT.proxyType
+        }
+
     companion object {
         private const val PREFS_NAME = "ucf_vpn_config"
 
@@ -92,6 +135,7 @@ class ConfigPreferences(context: Context) {
         private const val KEY_PROXY_PORT = "ucf_proxy_port"
         private const val KEY_PROXY_USERNAME = "ucf_proxy_username"
         private const val KEY_PROXY_PASSWORD = "ucf_proxy_password"
+        private const val KEY_PROXY_TYPE = "ucf_proxy_type"
         private const val KEY_WS_URL = "ucf_ws_url"
         private const val KEY_WS_MODE = "ucf_ws_mode"
         private const val KEY_WS_LOCAL_PORT = "ucf_ws_local_port"
@@ -99,6 +143,9 @@ class ConfigPreferences(context: Context) {
         private const val KEY_WS_REMOTE_PORT = "ucf_ws_remote_port"
         private const val KEY_WS_PING_FREQ = "ucf_ws_ping_freq"
         private const val KEY_WS_RETRY_BACKOFF = "ucf_ws_retry_backoff"
+        private const val KEY_PRIVATE_NETWORKS = "ucf_private_networks"
+        private const val KEY_BYPASS_APPS = "ucf_bypass_apps"
+        private const val KEY_DEFAULT_VIA_PROXY = "ucf_default_via_proxy"
         private const val KEY_WG_ENDPOINT = "ucf_wg_endpoint"
         private const val KEY_WG_LOCAL_IP = "ucf_wg_local_ip"
         private const val KEY_WG_DNS = "ucf_wg_dns"

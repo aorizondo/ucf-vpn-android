@@ -109,18 +109,24 @@ class VpnStateMachine {
         return when (from) {
             is VpnState.Disconnected -> to == VpnState.SstpConnecting
             is VpnState.SstpConnecting -> to == VpnState.SstpConnected || to is VpnState.SstpError
-            is VpnState.SstpConnected -> to == VpnState.ProxyAuthenticating
+            is VpnState.SstpConnected -> to is VpnState.PppNegotiating
+            is VpnState.PppNegotiating ->
+                to is VpnState.PppNegotiating || to is VpnState.PppAuthenticated || to is VpnState.SstpError
+            is VpnState.PppAuthenticated -> to == VpnState.ProxyAuthenticating
             is VpnState.ProxyAuthenticating -> to == VpnState.ProxyAuthenticated || to is VpnState.ProxyError
-            is VpnState.ProxyAuthenticated -> to == VpnState.WstunnelStarting
-            is VpnState.WstunnelStarting -> to == VpnState.WstunnelRunning || to is VpnState.WstunnelError
-            is VpnState.WstunnelRunning -> to == VpnState.WireGuardConnecting
+            is VpnState.ProxyAuthenticated -> to is VpnState.WstunnelStarting
+            is VpnState.WstunnelStarting -> to is VpnState.WstunnelRunning || to is VpnState.WstunnelError
+            is VpnState.WstunnelRunning -> to == VpnState.VpnStarting || to == VpnState.WireGuardConnecting
             is VpnState.WireGuardConnecting -> to == VpnState.WireGuardConnected || to is VpnState.WireGuardError
             is VpnState.WireGuardConnected -> to == VpnState.VpnStarting
-            is VpnState.VpnStarting -> to == VpnState.VpnRunning
+            is VpnState.VpnStarting -> to == VpnState.VpnRunning || to is VpnState.WireGuardError
             is VpnState.VpnRunning -> false // Must disconnect explicitly
-            is VpnState.SstpError -> to == VpnState.SstpConnecting || to == VpnState.Disconnected
-            is VpnState.ProxyError -> to == VpnState.SstpConnecting || to == VpnState.Disconnected
-            is VpnState.WstunnelError -> to == VpnState.SstpConnecting || to == VpnState.Disconnected
+            is VpnState.SstpError ->
+                to == VpnState.SstpConnecting || to == VpnState.Disconnected || to is VpnState.PppNegotiating
+            is VpnState.ProxyError ->
+                to == VpnState.SstpConnecting || to == VpnState.Disconnected || to == VpnState.ProxyAuthenticating
+            is VpnState.WstunnelError ->
+                to == VpnState.SstpConnecting || to == VpnState.Disconnected || to is VpnState.WstunnelStarting
             is VpnState.WireGuardError -> to == VpnState.SstpConnecting || to == VpnState.Disconnected
         }
     }

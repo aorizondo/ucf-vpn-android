@@ -28,6 +28,11 @@ class WstunnelManagerTest {
     }
 
     @Test
+    fun `default config is UDP tunnel type`() {
+        assertEquals(TunnelType.UDP, defaultConfig.tunnelType)
+    }
+
+    @Test
     fun `default config has correct local port`() {
         assertEquals(51820, defaultConfig.localPort)
     }
@@ -50,9 +55,69 @@ class WstunnelManagerTest {
     }
 
     @Test
+    fun `default config log level is INFO`() {
+        assertEquals("INFO", defaultConfig.logLevel)
+    }
+
+    @Test
     fun `dynamic factory creates DYNAMIC mode`() {
         val dyn = WstunnelConfig.dynamic()
         assertEquals(WstunnelConfig.Mode.DYNAMIC, dyn.mode)
+    }
+
+    @Test
+    fun `dynamic factory preserves default tunnel type`() {
+        val dyn = WstunnelConfig.dynamic()
+        assertEquals(TunnelType.UDP, dyn.tunnelType)
+    }
+
+    // ── socks5 factory ────────────────────────────────────────────
+
+    @Test
+    fun `socks5 factory creates SOCKS5 tunnel type`() {
+        val s5 = WstunnelConfig.socks5()
+        assertEquals(TunnelType.SOCKS5, s5.tunnelType)
+    }
+
+    @Test
+    fun `socks5 factory defaults to port 1080`() {
+        val s5 = WstunnelConfig.socks5()
+        assertEquals(1080, s5.localPort)
+    }
+
+    @Test
+    fun `socks5 factory uses correct server URL`() {
+        val s5 = WstunnelConfig.socks5()
+        assertEquals("wss://solverius-ws.zpwhqo.easypanel.host", s5.serverUrl)
+    }
+
+    @Test
+    fun `socks5 factory uses correct proxy settings`() {
+        val s5 = WstunnelConfig.socks5()
+        assertEquals("10.14.0.13", s5.proxyHost)
+        assertEquals(3128, s5.proxyPort)
+    }
+
+    @Test
+    fun `socks5 factory defaults to INFO log level`() {
+        val s5 = WstunnelConfig.socks5()
+        assertEquals("INFO", s5.logLevel)
+    }
+
+    @Test
+    fun `socks5 factory accepts custom parameters`() {
+        val s5 = WstunnelConfig.socks5(
+            localPort = 9999,
+            serverUrl = "wss://custom.example.com",
+            proxyHost = "proxy.custom",
+            proxyPort = 8080,
+            logLevel = "DEBUG"
+        )
+        assertEquals(9999, s5.localPort)
+        assertEquals("wss://custom.example.com", s5.serverUrl)
+        assertEquals("proxy.custom", s5.proxyHost)
+        assertEquals(8080, s5.proxyPort)
+        assertEquals("DEBUG", s5.logLevel)
     }
 
     // ── buildCommand — FIXED mode ─────────────────────────────────
@@ -68,7 +133,8 @@ class WstunnelManagerTest {
             "-p", "http://10.14.0.13:3128",
             "wss://solverius-ws.zpwhqo.easypanel.host",
             "--connection-retry-max-backoff", "10s",
-            "--websocket-ping-frequency", "10s"
+            "--websocket-ping-frequency", "10s",
+            "--log-lvl", "INFO"
         )
 
         assertEquals(expected, cmd)
@@ -125,9 +191,19 @@ class WstunnelManagerTest {
     }
 
     @Test
-    fun `buildCommand element count is 13 for FIXED mode`() {
+    fun `buildCommand FIXED mode respects custom log level`() {
+        val config = defaultConfig.copy(logLevel = "DEBUG")
+
+        val cmd = config.buildCommand(binaryPath)
+
+        assertEquals("--log-lvl", cmd[11])
+        assertEquals("DEBUG", cmd[12])
+    }
+
+    @Test
+    fun `buildCommand element count is 15 for FIXED mode`() {
         val cmd = defaultConfig.buildCommand(binaryPath)
-        assertEquals(13, cmd.size)
+        assertEquals(15, cmd.size)
     }
 
     // ── buildCommand — DYNAMIC mode ───────────────────────────────
@@ -164,6 +240,57 @@ class WstunnelManagerTest {
         assertEquals("http://10.14.0.13:3128", cmd[5])
         assertEquals("--connection-retry-max-backoff", cmd[7])
         assertEquals("--websocket-ping-frequency", cmd[9])
+    }
+
+    // ── buildCommand — SOCKS5 mode ───────────────────────────────
+
+    @Test
+    fun `buildCommand SOCKS5 mode uses socks5 listen arg`() {
+        val s5 = WstunnelConfig.socks5()
+
+        val cmd = s5.buildCommand(binaryPath)
+
+        assertEquals("socks5://0.0.0.0:1080", cmd[3])
+    }
+
+    @Test
+    fun `buildCommand SOCKS5 mode with custom port`() {
+        val s5 = WstunnelConfig.socks5(localPort = 9999)
+
+        val cmd = s5.buildCommand(binaryPath)
+
+        assertEquals("socks5://0.0.0.0:9999", cmd[3])
+    }
+
+    // ── buildCommand — HTTP mode ──────────────────────────────────
+
+    @Test
+    fun `buildCommand HTTP mode uses http listen arg`() {
+        val http = WstunnelConfig(tunnelType = TunnelType.HTTP)
+
+        val cmd = http.buildCommand(binaryPath)
+
+        assertEquals("http://0.0.0.0:51820", cmd[3])
+    }
+
+    // ── buildCommand — TCP mode ───────────────────────────────────
+
+    @Test
+    fun `buildCommand TCP FIXED mode uses tcp listen arg`() {
+        val tcp = WstunnelConfig(tunnelType = TunnelType.TCP)
+
+        val cmd = tcp.buildCommand(binaryPath)
+
+        assertEquals("tcp://51820:72.62.160.61:51820", cmd[3])
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `buildCommand TCP DYNAMIC mode throws IllegalArgumentException`() {
+        val tcp = WstunnelConfig(
+            tunnelType = TunnelType.TCP,
+            mode = WstunnelConfig.Mode.DYNAMIC
+        )
+        tcp.buildCommand(binaryPath)
     }
 
     // ── URL validation ────────────────────────────────────────────
@@ -219,6 +346,18 @@ class WstunnelManagerTest {
         assertEquals(WstunnelState.ERROR, WstunnelState.valueOf("ERROR"))
     }
 
+    // ── TunnelType enum ──────────────────────────────────────────
+
+    @Test
+    fun `TunnelType has all four values`() {
+        val values = TunnelType.entries
+        assertEquals(4, values.size)
+        assertEquals(TunnelType.UDP, TunnelType.valueOf("UDP"))
+        assertEquals(TunnelType.SOCKS5, TunnelType.valueOf("SOCKS5"))
+        assertEquals(TunnelType.HTTP, TunnelType.valueOf("HTTP"))
+        assertEquals(TunnelType.TCP, TunnelType.valueOf("TCP"))
+    }
+
     // ── WstunnelConfig Mode enum ─────────────────────────────────
 
     @Test
@@ -246,6 +385,13 @@ class WstunnelManagerTest {
         val b = WstunnelConfig()
         assertEquals(a, b)
         assertEquals(a.hashCode(), b.hashCode())
+    }
+
+    @Test
+    fun `config equality — different tunnel types are not equal`() {
+        val udp = WstunnelConfig(tunnelType = TunnelType.UDP)
+        val socks5 = WstunnelConfig(tunnelType = TunnelType.SOCKS5)
+        assertNotEquals(udp, socks5)
     }
 
     @Test

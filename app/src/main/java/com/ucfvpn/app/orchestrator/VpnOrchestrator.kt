@@ -5,17 +5,15 @@ import com.ucfvpn.app.proxy.ProxyAuthService
 import com.ucfvpn.app.proxy.ProxyAuthState
 import com.ucfvpn.app.sstp.client.SstpState
 import com.ucfvpn.app.sstp.client.SstpTunnel
+import com.ucfvpn.app.sstp.client.SstpTunnelImpl
 import com.ucfvpn.app.state.ConnectionState
 import com.ucfvpn.app.state.ReconnectManager
 import com.ucfvpn.app.state.ReconnectState
 import com.ucfvpn.app.state.VpnState
 import com.ucfvpn.app.state.VpnStateMachine
-import com.ucfvpn.app.vpn.VpnConfig
+import com.ucfvpn.app.prefs.ConfigPreferences
 import com.ucfvpn.app.vpn.VpnGatewayService
-import com.ucfvpn.app.vpn.WireGuardState
-import com.ucfvpn.app.vpn.WireGuardManager
-import com.ucfvpn.app.wg.WireGuardConfig
-import com.ucfvpn.app.wg.WireGuardConfigRepository
+import com.ucfvpn.app.wstunnel.TunnelType
 import com.ucfvpn.app.wstunnel.WstunnelConfig
 import com.ucfvpn.app.wstunnel.WstunnelManager
 import com.ucfvpn.app.wstunnel.WstunnelState
@@ -40,7 +38,7 @@ import java.time.Instant
 /**
  * Immutable configuration bundle for the full VPN stack.
  * Contains all credentials and configuration needed to establish the stacked VPN:
- * SSTP → Proxy Auth → wstunnel → WireGuard → VpnService
+ * SSTP → PPP → Proxy Auth → wstunnel SOCKS5 → VpnService (split tunnel).
  */
 data class AppConfig(
     val sstpServer: String = "npv.ucf.edu.cu",
@@ -49,8 +47,31 @@ data class AppConfig(
     val sstpPassword: String,
     val proxyUsername: String,
     val proxyPassword: String,
-    val wgConfig: WireGuardConfig,
-    val wstunnelConfig: WstunnelConfig = WstunnelConfig()
+    val wstunnelConfig: WstunnelConfig = WstunnelConfig(),
+    val splitTunnelConfig: SplitTunnelConfig = SplitTunnelConfig(),
+
+    /** Debug flag: kept for UiConfig compatibility. The Fase 5 sequence always uses SOCKS5. */
+    val debugWstunnelSocks5: Boolean = false,
+
+    /**
+     * When true (legacy default) the SSTP TLS handshake accepts any certificate
+     * (VERIFY_NONE). When false the system default trust manager is used,
+     * enforcing real certificate validation.
+     */
+    val ignoreSslErrors: Boolean = true
+)
+
+/**
+ * Split-tunnel routing configuration (Fase 4/5).
+ *
+ * @param privateNetworks CIDR networks routed through the SSTP tunnel
+ * @param bypassApps Package names excluded from the VPN (reserved for future use)
+ * @param defaultViaProxy When true, the default route goes through the SOCKS5 proxy
+ */
+data class SplitTunnelConfig(
+    val privateNetworks: List<String> = listOf("10.0.0.0/8", "192.168.0.0/16", "172.16.0.0/12"),
+    val bypassApps: List<String> = emptyList(),
+    val defaultViaProxy: Boolean = true
 )
 
 /**
@@ -67,32 +88,29 @@ data class LogEntry(
  *
  * ## Connection Sequence
  * ```
- * 1. VpnState.SstpConnecting → SstpTunnel.connect()
- * 2. VpnState.SstpConnected → wait for PPP IP assignment
- * 3. VpnState.ProxyAuthenticating → ProxyAuthService.login()
- * 4. VpnState.ProxyAuthenticated → verify session
- * 5. VpnState.WstunnelStarting → WstunnelManager.start()
- * 6. VpnState.WstunnelRunning → wait for UDP:51820
- * 7. VpnState.WireGuardConnecting → WireGuardManager.start()
- * 8. VpnState.WireGuardConnected → verify tunnel
- * 9. VpnState.VpnStarting → VpnGatewayService.establishTunInterface()
- * 10. VpnState.VpnRunning → all systems go!
+ * 1. VpnState.SstpConnecting → SstpTunnel.connect() (retry ×MAX_SSTP_RETRIES)
+ * 2. VpnState.SstpConnected → PPP phases (LCP → AUTH → IPCP) → wait for IP (retry ×MAX_PPP_RETRIES)
+ * 3. VpnState.ProxyAuthenticating → ProxyAuthService.login() (retry ×MAX_PROXY_RETRIES)
+ * 4. VpnState.WstunnelStarting(SOCKS5) → WstunnelManager.start() + waitForSocks5Ready (retry ×MAX_WSTUNNEL_RETRIES)
+ * 5. VpnState.VpnStarting → VpnGatewayService.startWithSplitTunnelSocks5()
+ * 6. VpnState.VpnRunning → all systems go!
  * ```
  *
  * ## Error Handling
- * - Each step wrapped in try/catch
- * - On error: set corresponding error state (SstpError, ProxyError, etc.)
- * - If ReconnectManager is active: trigger reconnect from first failed step
- * - On fatal error: stop all components
+ * - Each layer is wrapped in [retryLayer] with a bounded number of retries.
+ * - On retry exhaustion: set the corresponding error state (SstpError, ProxyError, etc.)
+ *   and rethrow so [handleConnectionError] delegates to the [ReconnectManager].
+ * - The VPN layer has no retry loop: a failure maps to [VpnState.WireGuardError]
+ *   (the only error state available for the final stage) and is delegated to
+ *   the [ReconnectManager] for a full restart.
  *
- * ## Cleanup Sequence
+ * ## Cleanup Sequence (reverse order)
  * ```
- * 1. WireGuardManager.stop()
+ * 1. VpnGatewayService.shutdown() (TUN + tun2socks)
  * 2. WstunnelManager.stop()
  * 3. ProxyAuthService.reset()
  * 4. SstpTunnel.disconnect()
- * 5. VpnGatewayService.shutdown()
- * 6. State = Disconnected
+ * 5. State = Disconnected
  * ```
  *
  * @param context Android context for wstunnel binary extraction
@@ -100,7 +118,6 @@ data class LogEntry(
  * @param sstpTunnel SSTP tunnel implementation
  * @param proxyAuthService Proxy authentication service
  * @param wstunnelManager wstunnel process manager
- * @param wireGuardConfigRepository Repository for WireGuard configuration
  * @param stateMachine VPN state machine for state transitions
  * @param reconnectManager Optional reconnection manager with exponential backoff
  */
@@ -109,7 +126,6 @@ class VpnOrchestrator(
     private val sstpTunnel: SstpTunnel,
     private val proxyAuthService: ProxyAuthService,
     private val wstunnelManager: WstunnelManager,
-    private val wireGuardConfigRepository: WireGuardConfigRepository,
     private val stateMachine: VpnStateMachine = VpnStateMachine(),
     reconnectManager: ReconnectManager? = null,
     var vpnService: VpnGatewayService? = null
@@ -253,48 +269,19 @@ class VpnOrchestrator(
      */
     fun connect(uiConfig: com.ucfvpn.app.ui.viewmodel.UiConfig) {
         scope.launch {
-            // Build WireGuardConfig from uiConfig
-            val wgConfig = WireGuardConfig(
-                privateKey = "", // Private key managed via Keystore
-                address = uiConfig.wireGuardLocalIp,
-                dns = uiConfig.wireGuardDns.split(",").map { it.trim() }.filter { it.isNotEmpty() },
-                peerEndpoint = uiConfig.wireGuardEndpoint,
-                peerPublicKey = "", // Configured separately
-                peerPresharedKey = null,
-                allowedIps = listOf("0.0.0.0/0", "::/0")
-            )
-
-            val appConfig = AppConfig(
-                sstpServer = uiConfig.sstpHost,
-                sstpPort = uiConfig.sstpPort,
-                sstpUsername = uiConfig.sstpUsername,
-                sstpPassword = uiConfig.sstpPassword,
-                proxyUsername = uiConfig.proxyUsername,
-                proxyPassword = uiConfig.proxyPassword,
-                wgConfig = wgConfig,
-                wstunnelConfig = WstunnelConfig(
-                    serverUrl = uiConfig.wstunnelUrl,
-                    mode = when (uiConfig.wstunnelMode) {
-                        com.ucfvpn.app.ui.viewmodel.WstunnelMode.FIXED -> WstunnelConfig.Mode.FIXED
-                        com.ucfvpn.app.ui.viewmodel.WstunnelMode.DYNAMIC -> WstunnelConfig.Mode.DYNAMIC
-                    }
-                )
-            )
-
-            start(appConfig)
+            start(buildAppConfig(uiConfig))
         }
     }
 
     /**
      * Stop the full VPN stack cleanly.
      *
-     * This follows the cleanup sequence:
-     * 1. WireGuardManager.stop()
+     * This follows the cleanup sequence (reverse of the start order):
+     * 1. VpnGatewayService.shutdown()
      * 2. WstunnelManager.stop()
      * 3. ProxyAuthService.reset()
      * 4. SstpTunnel.disconnect()
-     * 5. VpnGatewayService.shutdown()
-     * 6. State = Disconnected
+     * 5. State = Disconnected
      */
     suspend fun stop() = mutex.withLock {
         if (!isRunning) {
@@ -315,7 +302,6 @@ class VpnOrchestrator(
         try {
             // Cleanup sequence (in reverse order)
             cleanupVpnService()
-            cleanupWireGuard()
             cleanupWstunnel()
             cleanupProxyAuth()
             cleanupSstp()
@@ -345,29 +331,25 @@ class VpnOrchestrator(
     fun isRunning(): Boolean = isRunning
 
     /**
-     * Get the current WireGuard state.
-     */
-    fun getWireGuardState(): WireGuardState? = vpnService?.getWireGuardState()
-
-    /**
      * Get the current wstunnel state.
      */
     fun getWstunnelState(): WstunnelState = wstunnelManager.state.value
 
     /**
      * Save configuration to repository.
+     *
+     * Converts the [com.ucfvpn.app.ui.viewmodel.UiConfig] into an [AppConfig]
+     * via [buildAppConfig]. WireGuard configuration is no longer persisted
+     * (Fase 5 removed WireGuard from the stack).
      */
     fun saveConfig(uiConfig: com.ucfvpn.app.ui.viewmodel.UiConfig) {
-        val wgConfig = WireGuardConfig(
-            privateKey = "", // Private key managed via Keystore
-            address = uiConfig.wireGuardLocalIp,
-            dns = uiConfig.wireGuardDns.split(",").map { it.trim() }.filter { it.isNotEmpty() },
-            peerEndpoint = uiConfig.wireGuardEndpoint,
-            peerPublicKey = "", // Configured separately
-            peerPresharedKey = null,
-            allowedIps = listOf("0.0.0.0/0", "::/0")
+        val appConfig = buildAppConfig(uiConfig)
+        ConfigPreferences(context).save(uiConfig)
+        Timber.tag(TAG).d(
+            "Configuration saved: sstp=${appConfig.sstpServer}:${appConfig.sstpPort}, " +
+                "wstunnel=${appConfig.wstunnelConfig.serverUrl}, " +
+                "splitTunnel=${appConfig.splitTunnelConfig.privateNetworks}"
         )
-        wireGuardConfigRepository.saveConfig(wgConfig)
     }
 
     /**
@@ -398,10 +380,10 @@ class VpnOrchestrator(
                 stop()
             }
         }
-        scope.launch { 
+        scope.launch {
             // Cancel after a brief delay to allow cleanup
             delay(100)
-            this@VpnOrchestrator.scope.cancel() 
+            this@VpnOrchestrator.scope.cancel()
         }
     }
 
@@ -412,56 +394,123 @@ class VpnOrchestrator(
         _connectionLog.value = emptyList()
     }
 
+    // ── Config conversion ─────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * Convert a [com.ucfvpn.app.ui.viewmodel.UiConfig] into an [AppConfig].
+     *
+     * The wstunnel config is built from the UiConfig fields; the SOCKS5
+     * variant used by the connection sequence is derived at runtime by
+     * [buildSocks5Config].
+     */
+    private fun buildAppConfig(uiConfig: com.ucfvpn.app.ui.viewmodel.UiConfig): AppConfig {
+        return AppConfig(
+            sstpServer = uiConfig.sstpHost,
+            sstpPort = uiConfig.sstpPort,
+            sstpUsername = uiConfig.sstpUsername,
+            sstpPassword = uiConfig.sstpPassword,
+            proxyUsername = uiConfig.proxyUsername,
+            proxyPassword = uiConfig.proxyPassword,
+            wstunnelConfig = uiConfig.toWstunnelConfig(),
+            splitTunnelConfig = SplitTunnelConfig(
+                privateNetworks = parsePrivateNetworks(uiConfig.privateNetworks),
+                bypassApps = parseCsvList(uiConfig.bypassApps),
+                defaultViaProxy = uiConfig.defaultViaProxy
+            ),
+            debugWstunnelSocks5 = uiConfig.debugWstunnelSocks5,
+            ignoreSslErrors = uiConfig.ignoreSslErrors
+        )
+    }
+
+    /**
+     * Build the SOCKS5 wstunnel config used by the connection sequence.
+     *
+     * The Fase 5 sequence always tunnels through a local SOCKS5 proxy
+     * (hev-socks5-tunnel → wstunnel SOCKS5), so the config is derived from
+     * the [AppConfig.wstunnelConfig] transport fields.
+     */
+    private fun buildSocks5Config(appConfig: AppConfig): WstunnelConfig {
+        val wstunnel = appConfig.wstunnelConfig
+        return WstunnelConfig.socks5(
+            localPort = WSTUNNEL_SOCKS5_PORT,
+            serverUrl = wstunnel.serverUrl,
+            proxyHost = wstunnel.proxyHost,
+            proxyPort = wstunnel.proxyPort,
+            proxyAuth = wstunnel.proxyAuth,
+            logLevel = wstunnel.logLevel
+        )
+    }
+
     // ── Connection sequence ────────────────────────────────────────
     // ─────────────────────────────────────────────────────────────
 
     private suspend fun performConnectionSequence(appConfig: AppConfig) {
         emitLog("INFO", "Starting VPN connection sequence...")
 
-        // Step 1: SSTP Connecting
+        // ── Layer 1: SSTP ──
         if (!stateMachine.transition(VpnState.SstpConnecting)) {
             throw IllegalStateException("Failed to transition to SstpConnecting")
         }
         emitLog("INFO", "SSTP: Connecting to ${appConfig.sstpServer}:${appConfig.sstpPort}...")
 
-        try {
+        retryLayer("SSTP", MAX_SSTP_RETRIES, { VpnState.SstpError(it) }) {
             // Setup SSTP callbacks
             setupSstpCallbacks()
 
-            // CRITICAL: Protect the socket BEFORE connecting (prevents traffic loop)
-            // The SstpHandshake internally creates and protects the socket
+            // Configure the concrete tunnel: TLS certificate validation flag and
+            // the socket protector. The protector delegates to
+            // VpnGatewayService.protectSocket() and is invoked inside
+            // SstpHandshake.tcpConnect() BEFORE the socket connects (prevents the
+            // VPN traffic loop). A safe cast is used because the tunnel is injected
+            // as SstpTunnel; non-SstpTunnelImpl implementations are left untouched.
+            (sstpTunnel as? SstpTunnelImpl)?.configure(
+                ignoreSslErrors = appConfig.ignoreSslErrors,
+                socketProtector = { socket -> vpnService?.protectSocket(socket) == true }
+            )
+
+            // CRITICAL: Protect the socket BEFORE connecting (prevents traffic loop).
+            // The protector runs inside SstpHandshake.tcpConnect() before socket.connect().
             sstpTunnel.connect(appConfig.sstpServer, appConfig.sstpPort)
 
             // Wait for SSTP connection
             waitForSstpConnection()
 
             emitLog("INFO", "SSTP: Connected successfully")
-            lastErrorStage = null
-
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "SSTP connection failed")
-            lastErrorStage = "SSTP"
-            stateMachine.transition(VpnState.SstpError("SSTP connection failed: ${e.message}"))
-            throw e
         }
 
-        // Step 2: SSTP Connected - wait for PPP IP assignment
         if (!stateMachine.transition(VpnState.SstpConnected)) {
             throw IllegalStateException("Failed to transition to SstpConnected")
         }
-        emitLog("INFO", "SSTP: Waiting for PPP IP assignment...")
 
-        // Wait for PPP to negotiate IP (typically handled by SSTP internals)
-        // The SstpTunnel.localAddress will be set when PPP succeeds
-        waitForPppIpAssignment()
+        // ── Layer 2: PPP ──
+        emitLog("INFO", "SSTP: Waiting for PPP negotiation...")
 
-        // Step 3: Proxy Authentication
+        retryLayer("PPP", MAX_PPP_RETRIES, { VpnState.SstpError(it) }) {
+            // PPP phases are markers; the actual negotiation runs inside SstpTunnelImpl.
+            // The orchestrator has no PppStack reference, so it transitions through
+            // the phases and waits for the PPP IP assignment on the tunnel.
+            stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.LCP))
+            emitLog("INFO", "PPP: LCP negotiation...")
+
+            stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
+            emitLog("INFO", "PPP: Authentication (PAP)...")
+
+            stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
+            emitLog("INFO", "PPP: IPCP negotiation...")
+
+            val localIp = waitForPppIpAssignment()
+            stateMachine.transition(VpnState.PppAuthenticated(localIp))
+            emitLog("INFO", "PPP: Authenticated, IP assigned: $localIp")
+        }
+
+        // ── Layer 3: Proxy Authentication ──
         if (!stateMachine.transition(VpnState.ProxyAuthenticating)) {
             throw IllegalStateException("Failed to transition to ProxyAuthenticating")
         }
         emitLog("INFO", "Proxy: Authenticating to captive portal...")
 
-        try {
+        retryLayer("Proxy", MAX_PROXY_RETRIES, { VpnState.ProxyError(it) }) {
             val proxyResult = proxyAuthService.login(
                 appConfig.proxyUsername,
                 appConfig.proxyPassword
@@ -473,29 +522,22 @@ class VpnOrchestrator(
             }
 
             emitLog("INFO", "Proxy: Authentication successful")
-            lastErrorStage = null
-
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Proxy authentication failed")
-            lastErrorStage = "Proxy"
-            stateMachine.transition(VpnState.ProxyError("Proxy auth failed: ${e.message}"))
-            throw e
         }
 
-        // Step 4: Proxy Authenticated
         if (!stateMachine.transition(VpnState.ProxyAuthenticated)) {
             throw IllegalStateException("Failed to transition to ProxyAuthenticated")
         }
         emitLog("INFO", "Proxy: Session verified")
 
-        // Step 5: Wstunnel Starting
-        if (!stateMachine.transition(VpnState.WstunnelStarting)) {
+        // ── Layer 4: wstunnel SOCKS5 ──
+        val socks5Config = buildSocks5Config(appConfig)
+        if (!stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))) {
             throw IllegalStateException("Failed to transition to WstunnelStarting")
         }
-        emitLog("INFO", "wstunnel: Starting UDP tunnel to ${appConfig.wstunnelConfig.serverUrl}...")
+        emitLog("INFO", "wstunnel: Starting SOCKS5 tunnel to ${socks5Config.serverUrl}...")
 
-        try {
-            val wstunnelResult = wstunnelManager.start(appConfig.wstunnelConfig)
+        retryLayer("wstunnel", MAX_WSTUNNEL_RETRIES, { VpnState.WstunnelError(it) }) {
+            val wstunnelResult = wstunnelManager.start(socks5Config)
 
             if (wstunnelResult.isFailure) {
                 throw wstunnelResult.exceptionOrNull()
@@ -503,66 +545,53 @@ class VpnOrchestrator(
             }
 
             emitLog("INFO", "wstunnel: Process started")
-            lastErrorStage = null
 
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "wstunnel start failed")
-            lastErrorStage = "wstunnel"
-            stateMachine.transition(VpnState.WstunnelError("wstunnel failed: ${e.message}"))
-            throw e
+            // Wait for the local SOCKS5 listener to accept a real handshake
+            if (!wstunnelManager.waitForSocks5Ready(
+                    port = WSTUNNEL_SOCKS5_PORT,
+                    timeoutMs = WSTUNNEL_SOCKS5_READY_TIMEOUT_MS
+                )
+            ) {
+                throw Exception("wstunnel SOCKS5 not ready on 127.0.0.1:$WSTUNNEL_SOCKS5_PORT")
+            }
+            emitLog("INFO", "wstunnel: SOCKS5 :$WSTUNNEL_SOCKS5_PORT ready")
         }
 
-        // Step 6: Wstunnel Running - wait for UDP port
-        if (!stateMachine.transition(VpnState.WstunnelRunning)) {
+        if (!stateMachine.transition(VpnState.WstunnelRunning(WSTUNNEL_SOCKS5_PORT))) {
             throw IllegalStateException("Failed to transition to WstunnelRunning")
         }
-        emitLog("INFO", "wstunnel: Waiting for UDP:51820 to be ready...")
 
-        waitForWstunnelReady()
-
-        // Step 7: WireGuard Connecting
-        if (!stateMachine.transition(VpnState.WireGuardConnecting)) {
-            throw IllegalStateException("Failed to transition to WireGuardConnecting")
-        }
-        emitLog("INFO", "WireGuard: Connecting to ${appConfig.wgConfig.peerEndpoint}...")
-
-        try {
-            // Build VPN config from WireGuard config
-            val vpnConfig = buildVpnConfig(appConfig.wgConfig)
-
-            // Use the internal WireGuardManager from VpnGatewayService
-            val wgResult = vpnService?.startWithWireGuard(appConfig.wgConfig, vpnConfig)
-
-            if (wgResult != null && wgResult.isFailure) {
-                throw wgResult.exceptionOrNull()
-                    ?: Exception("Unknown WireGuard error")
-            }
-
-            emitLog("INFO", "WireGuard: Tunnel established")
-            lastErrorStage = null
-
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "WireGuard connection failed")
-            lastErrorStage = "WireGuard"
-            stateMachine.transition(VpnState.WireGuardError("WireGuard failed: ${e.message}"))
-            throw e
-        }
-
-        // Step 8: WireGuard Connected
-        if (!stateMachine.transition(VpnState.WireGuardConnected)) {
-            throw IllegalStateException("Failed to transition to WireGuardConnected")
-        }
-        emitLog("INFO", "WireGuard: Connected, waiting for tunnel...")
-
-        waitForWireGuardConnected()
-
-        // Step 9: VPN Starting
+        // ── Layer 5: VPN Split Tunnel ──
         if (!stateMachine.transition(VpnState.VpnStarting)) {
             throw IllegalStateException("Failed to transition to VpnStarting")
         }
-        emitLog("INFO", "VPN: Establishing TUN interface...")
+        emitLog("INFO", "VPN: Establishing split TUN interface...")
 
-        // Step 10: VPN Running
+        try {
+            val vpnService = vpnService
+                ?: throw IllegalStateException("VpnGatewayService not available")
+
+            val vpnResult = vpnService.startWithSplitTunnelSocks5(
+                privateNetworks = appConfig.splitTunnelConfig.privateNetworks,
+                socks5Proxy = "127.0.0.1:$WSTUNNEL_SOCKS5_PORT"
+            )
+
+            if (vpnResult.isFailure) {
+                throw vpnResult.exceptionOrNull()
+                    ?: Exception("Unknown VPN error")
+            }
+
+            emitLog("INFO", "VPN: Split tunnel established")
+            lastErrorStage = null
+
+        } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "VPN start failed")
+            lastErrorStage = "VPN"
+            stateMachine.transition(VpnState.WireGuardError("VPN failed: ${e.message}"))
+            throw e
+        }
+
+        // ── Connected ──
         if (!stateMachine.transition(VpnState.VpnRunning)) {
             throw IllegalStateException("Failed to transition to VpnRunning")
         }
@@ -572,6 +601,44 @@ class VpnOrchestrator(
 
         // Notify reconnect manager of success
         reconnectManager.onSuccess()
+    }
+
+    // ── Layer retry helper ────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * Execute [block] with a bounded number of retries for a single stack layer.
+     *
+     * On failure the layer is retried up to [maxRetries] times with
+     * [LAYER_RETRY_DELAY_MS] between attempts. When retries are exhausted the
+     * [errorState] transition is applied and the exception is rethrown so the
+     * caller can delegate to the [ReconnectManager] for a full restart.
+     */
+    private suspend fun retryLayer(
+        layer: String,
+        maxRetries: Int,
+        errorState: (String) -> VpnState,
+        block: suspend () -> Unit
+    ) {
+        var attempt = 0
+        while (true) {
+            try {
+                block()
+                lastErrorStage = null
+                return
+            } catch (e: Exception) {
+                attempt++
+                lastErrorStage = layer
+                if (attempt > maxRetries) {
+                    val message = "$layer failed after ${attempt} attempts: ${e.message}"
+                    Timber.tag(TAG).e(e, "$layer failed after ${attempt} attempts")
+                    stateMachine.transition(errorState(message))
+                    throw e
+                }
+                emitLog("WARN", "$layer attempt $attempt failed (${e.message}), retrying in ${LAYER_RETRY_DELAY_MS}ms...")
+                delay(LAYER_RETRY_DELAY_MS)
+            }
+        }
     }
 
     // ── SSTP helpers ───────────────────────────────────────────────
@@ -615,68 +682,30 @@ class VpnOrchestrator(
         }
     }
 
-    private suspend fun waitForPppIpAssignment() {
+    /**
+     * Wait for the PPP IP assignment on the SSTP tunnel.
+     *
+     * @return the assigned local IP address
+     * @throws Exception on timeout or when the SSTP tunnel enters the error state
+     */
+    private suspend fun waitForPppIpAssignment(): String {
         val startTime = System.currentTimeMillis()
         val timeout = PPP_IP_TIMEOUT_MS
 
         while (sstpTunnel.localAddress == null) {
+            if (sstpCurrentState == SstpState.ERROR) {
+                throw Exception("SSTP entered error state during PPP negotiation")
+            }
             if (System.currentTimeMillis() - startTime > timeout) {
-                // PPP IP assignment might take time, log but continue
-                Timber.tag(TAG).w("PPP IP assignment timeout, continuing anyway")
-                break
+                throw Exception("PPP IP assignment timeout after ${timeout}ms")
             }
             delay(100)
         }
 
-        sstpTunnel.localAddress?.let {
-            emitLog("INFO", "SSTP: PPP IP assigned: $it")
-        }
-    }
-
-    // ── Wstunnel helpers ───────────────────────────────────────────
-    // ─────────────────────────────────────────────────────────────
-
-    private suspend fun waitForWstunnelReady() {
-        val startTime = System.currentTimeMillis()
-        val timeout = WSTUNNEL_TIMEOUT_MS
-
-        while (wstunnelManager.state.value != WstunnelState.RUNNING) {
-            if (wstunnelManager.state.value == WstunnelState.ERROR) {
-                throw Exception("wstunnel entered error state")
-            }
-            if (System.currentTimeMillis() - startTime > timeout) {
-                throw Exception("wstunnel startup timeout after ${timeout}ms")
-            }
-            delay(100)
-        }
-    }
-
-    // ── WireGuard helpers ───────────────────────────────────────────
-    // ─────────────────────────────────────────────────────────────
-
-    private suspend fun waitForWireGuardConnected() {
-        val startTime = System.currentTimeMillis()
-        val timeout = WIREGUARD_TIMEOUT_MS
-
-        // Check internal WireGuard state via VpnService
-        while (vpnService?.getWireGuardState() != WireGuardState.CONNECTED) {
-            if (vpnService?.getWireGuardState() == WireGuardState.ERROR) {
-                throw Exception("WireGuard entered error state")
-            }
-            if (System.currentTimeMillis() - startTime > timeout) {
-                throw Exception("WireGuard connection timeout after ${timeout}ms")
-            }
-            delay(100)
-        }
-    }
-
-    private fun buildVpnConfig(wgConfig: WireGuardConfig): VpnConfig {
-        return VpnConfig(
-            address = wgConfig.address.split("/").firstOrNull() ?: "10.0.0.1",
-            prefixLength = wgConfig.address.split("/").getOrNull(1)?.toIntOrNull() ?: 24,
-            mtu = wgConfig.mtu,
-            dnsServers = wgConfig.dns
-        )
+        val localIp = sstpTunnel.localAddress
+            ?: throw Exception("PPP IP assignment failed")
+        emitLog("INFO", "SSTP: PPP IP assigned: $localIp")
+        return localIp
     }
 
     // ── Error handling ─────────────────────────────────────────────
@@ -701,17 +730,6 @@ class VpnOrchestrator(
 
     // ── Cleanup sequence ───────────────────────────────────────────
     // ─────────────────────────────────────────────────────────────
-
-    private suspend fun cleanupWireGuard() {
-        try {
-            emitLog("INFO", "WireGuard: Stopping tunnel...")
-            vpnService?.shutdown()
-            emitLog("INFO", "WireGuard: Stopped")
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Error stopping WireGuard")
-            emitLog("ERROR", "WireGuard: Stop error - ${e.message}")
-        }
-    }
 
     private suspend fun cleanupWstunnel() {
         try {
@@ -779,6 +797,8 @@ class VpnOrchestrator(
             // All intermediate states → Connecting
             is VpnState.SstpConnecting,
             is VpnState.SstpConnected,
+            is VpnState.PppNegotiating,
+            is VpnState.PppAuthenticated,
             is VpnState.WstunnelStarting,
             is VpnState.WstunnelRunning,
             is VpnState.WireGuardConnecting,
@@ -800,7 +820,35 @@ class VpnOrchestrator(
         // Timeouts
         private const val CONNECTION_TIMEOUT_MS = 30_000L
         private const val PPP_IP_TIMEOUT_MS = 10_000L
-        private const val WSTUNNEL_TIMEOUT_MS = 30_000L
-        private const val WIREGUARD_TIMEOUT_MS = 30_000L
+
+        // Layer retry policy (Fase 5)
+        private const val MAX_SSTP_RETRIES = 2
+        private const val MAX_PPP_RETRIES = 2
+        private const val MAX_PROXY_RETRIES = 2
+        private const val MAX_WSTUNNEL_RETRIES = 2
+        private const val LAYER_RETRY_DELAY_MS = 2_000L
+
+        // wstunnel SOCKS5 (Fase 5)
+        private const val WSTUNNEL_SOCKS5_PORT = 1080
+        private const val WSTUNNEL_SOCKS5_READY_TIMEOUT_MS = 10_000L
     }
+}
+
+/**
+ * Parse a comma-separated list of values, trimming whitespace and
+ * dropping empty entries. Pure JVM helper (no Android APIs) so it can be
+ * unit-tested on the JVM (pattern: [com.ucfvpn.app.vpn.parseCidr]).
+ */
+internal fun parseCsvList(input: String): List<String> =
+    input.split(',')
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+
+/**
+ * Parse the private-networks CSV, falling back to the default CIDR list
+ * when the input contains no usable entries.
+ */
+internal fun parsePrivateNetworks(input: String): List<String> {
+    val parsed = parseCsvList(input)
+    return if (parsed.isEmpty()) SplitTunnelConfig().privateNetworks else parsed
 }

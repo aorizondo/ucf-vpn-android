@@ -7,6 +7,7 @@ import com.ucfvpn.app.sstp.protocol.SstpProtocol
 import com.ucfvpn.app.sstp.protocol.createCallConnectRequest
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
+import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -28,7 +29,18 @@ class SstpHandshake(
     private val server: String,
     private val port: Int = 443,
     private val username: String = "",
-    private val password: String = ""
+    private val password: String = "",
+    /**
+     * When true (legacy default) the TLS handshake accepts any certificate
+     * (VERIFY_NONE). When false the system default trust manager is used,
+     * enforcing real certificate validation.
+     */
+    private val ignoreSslErrors: Boolean = true,
+    /**
+     * Optional protector invoked on the TCP socket BEFORE it connects so the
+     * SSTP traffic bypasses the VPN tunnel (prevents a traffic loop).
+     */
+    private val socketProtector: SocketProtector? = null
 ) {
     companion object {
         private const val SNI_HOST = "npv.ucf.edu.cu"
@@ -48,9 +60,23 @@ class SstpHandshake(
         private set
 
     /**
-     * Create an SSL context that accepts all certificates (VERIFY_NONE).
+     * Create an SSL context for the TLS handshake.
+     *
+     * When [ignoreSslErrors] is true the context accepts all certificates
+     * (VERIFY_NONE, legacy default). When false the system default trust
+     * manager is used, enforcing real certificate validation.
      */
     fun createSslContext(): SSLContext {
+        if (!ignoreSslErrors) {
+            // Real certificate validation: init with the system default
+            // trust managers (null trustManagers → platform defaults).
+            sslContext = SSLContext.getInstance("TLS").apply {
+                init(null, null, SecureRandom())
+            }
+            Timber.d("SSL context created with system default trust manager")
+            return sslContext!!
+        }
+
         val trustAll = object : X509TrustManager {
             override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {
                 // No-op: accept all client certificates
@@ -96,9 +122,20 @@ class SstpHandshake(
 
     private fun tcpConnect() {
         Timber.d("Establishing TCP connection to $server:$port")
-        socket = Socket(server, port).apply {
-            soTimeout = 10000
+        val rawSocket = Socket()
+
+        // Protect the socket BEFORE connecting so its traffic bypasses the
+        // VPN tunnel (prevents the VPN → SSTP → VPN traffic loop).
+        socketProtector?.let { protector ->
+            val protected = protector.protect(rawSocket)
+            if (!protected) {
+                Timber.w("Socket protection failed for $server:$port — continuing unprotected")
+            }
         }
+
+        rawSocket.connect(InetSocketAddress(server, port))
+        rawSocket.soTimeout = 10000
+        socket = rawSocket
         Timber.d("TCP connection established")
     }
 
@@ -132,18 +169,13 @@ class SstpHandshake(
         // Build HTTP SSTP_DUPLEX_POST request
         val httpRequest = buildHttpRequest(correlationId)
 
+        // Step 1: Send HTTP request
         Timber.d("Sending SSTP_DUPLEX_POST request...")
         sslSocket?.outputStream?.write(httpRequest.toByteArray(Charsets.UTF_8))
         sslSocket?.outputStream?.flush()
 
-        // Send CALL_CONNECT_REQUEST immediately after HTTP headers
-        val callRequest = createCallConnectRequest()
-        Timber.d("Sending SSTP CALL_CONNECT_REQUEST (${callRequest.size} bytes)")
-        sslSocket?.outputStream?.write(callRequest)
-        sslSocket?.outputStream?.flush()
-
-        // Read HTTP response
-        Timber.d("Waiting for HTTP response...")
+        // Step 2: Read HTTP 200 BEFORE sending CALL_CONNECT_REQUEST (MS-SSTP spec requirement)
+        Timber.d("Waiting for HTTP 200 response...")
         val response = readHttpResponse()
 
         if (!response.contains("200")) {
@@ -151,9 +183,15 @@ class SstpHandshake(
             Timber.e(errorMsg)
             throw ConnectionError(errorMsg)
         }
-        Timber.d("HTTP tunnel established. Negotiating SSTP...")
+        Timber.d("HTTP tunnel established. Sending CALL_CONNECT_REQUEST...")
 
-        // Receive and parse CALL_CONNECT_ACK
+        // Step 3: Send CALL_CONNECT_REQUEST after HTTP 200
+        val callRequest = createCallConnectRequest()
+        Timber.d("Sending SSTP CALL_CONNECT_REQUEST (${callRequest.size} bytes)")
+        sslSocket?.outputStream?.write(callRequest)
+        sslSocket?.outputStream?.flush()
+
+        // Step 4: Receive and parse CALL_CONNECT_ACK
         receiveCallConnectAck()
     }
 
@@ -172,9 +210,8 @@ class SstpHandshake(
         val response = ByteArrayOutputStream()
         val buffer = ByteArray(4096)
         var headersComplete = false
-        var headerEndIndex = 0
 
-        while (!headersComplete || response.size() < headerEndIndex + 4) {
+        while (!headersComplete) {
             val bytesRead = sslSocket?.inputStream?.read(buffer) ?: -1
             if (bytesRead == -1) {
                 throw ConnectionError("Connection closed during HTTP handshake")
@@ -182,10 +219,8 @@ class SstpHandshake(
             response.write(buffer, 0, bytesRead)
 
             val responseBytes = response.toByteArray()
-            val headerEnd = findHeaderEnd(responseBytes)
-            if (headerEnd != -1) {
+            if (findHeaderEnd(responseBytes) != -1) {
                 headersComplete = true
-                headerEndIndex = headerEnd
             }
         }
 
@@ -343,3 +378,15 @@ class SstpHandshake(
 }
 
 class ConnectionError(message: String) : Exception(message)
+
+/**
+ * Functional interface for protecting a socket from VPN routing.
+ *
+ * Implementations typically delegate to [android.net.VpnService.protect].
+ * The protector MUST be invoked BEFORE the socket connects so the SSTP
+ * traffic goes out over the physical network instead of looping through
+ * the VPN tunnel.
+ */
+fun interface SocketProtector {
+    fun protect(socket: Socket): Boolean
+}
