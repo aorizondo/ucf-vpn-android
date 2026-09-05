@@ -308,3 +308,15 @@ jobs:
           arch: x86_64
           disable-animations: true
           script: ./gradlew connectedCheck --stacktrace
+
+      # Same reason as the JVM reports: without the HTML/XML the console only
+      # gives "The component is not displayed!" with no idea which node or why.
+      - name: Upload instrumented test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: instrumented-test-reports
+          path: |
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+          if-no-files-found: warn
