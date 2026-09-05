@@ -5,7 +5,6 @@ import com.ucfvpn.app.sstp.protocol.SstpMessageType
 import com.ucfvpn.app.sstp.protocol.SstpPacket
 import com.ucfvpn.app.sstp.protocol.SstpProtocol
 import com.ucfvpn.app.sstp.protocol.createCallConnected
-import com.ucfvpn.app.sstp.protocol.createCryptoBindingAttribute
 import com.ucfvpn.app.sstp.protocol.createEchoRequest
 import com.ucfvpn.app.sstp.protocol.createPppDataPacket
 import com.ucfvpn.app.sstp.ppp.PppEvent
@@ -198,7 +197,7 @@ class SstpTunnelImpl(
      * Send CALL_CONNECTED with crypto binding.
      * Based on Python reference: send_call_connected()
      */
-    private fun sendCallConnected(sendKey: ByteArray?, recvKey: ByteArray?, masterKey: ByteArray?) {
+    private fun sendCallConnected(sendKey: ByteArray?, recvKey: ByteArray?) {
         val hs = handshake ?: return
 
         val nonce = hs.nonce
@@ -271,7 +270,7 @@ class SstpTunnelImpl(
         // Re-send CALL_CONNECTED with crypto binding if connected
         if (state == SstpState.CONNECTED) {
             scope.launch(Dispatchers.IO) {
-                sendCallConnected(sendKey, recvKey, masterKey)
+                sendCallConnected(sendKey, recvKey)
             }
         }
     }

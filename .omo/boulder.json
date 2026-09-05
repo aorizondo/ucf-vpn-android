@@ -1,0 +1,43 @@
+{
+  "schema_version": 2,
+  "active_work_id": "ucf-vpn-split-tunnel-ad72cbb3",
+  "works": {
+    "ucf-vpn-split-tunnel-ad72cbb3": {
+      "work_id": "ucf-vpn-split-tunnel-ad72cbb3",
+      "active_plan": "/home/antonio/Desarrollo/lab/ucf-vpn/.omo/plans/ucf-vpn-split-tunnel.md",
+      "plan_name": "ucf-vpn-split-tunnel",
+      "status": "completed",
+      "started_at": "2026-09-05T00:56:20.091Z",
+      "updated_at": "2026-09-05T15:09:42.305Z",
+      "session_ids": [
+        "opencode:ses_f9121d414ffeyDaMC8FJdnH2B0",
+        "opencode:ses_f90e7bdd1ffeG1c7tOqACeZRep"
+      ],
+      "session_origins": {
+        "opencode:ses_f9121d414ffeyDaMC8FJdnH2B0": "direct",
+        "opencode:ses_f90e7bdd1ffeG1c7tOqACeZRep": "appended"
+      },
+      "agent": "atlas",
+      "task_sessions": {},
+      "ended_at": "2026-09-05T15:09:42.305Z",
+      "elapsed_ms": 51202214
+    }
+  },
+  "active_plan": "/home/antonio/Desarrollo/lab/ucf-vpn/.omo/plans/ucf-vpn-split-tunnel.md",
+  "started_at": "2026-09-05T00:56:20.091Z",
+  "status": "completed",
+  "updated_at": "2026-09-05T15:09:42.305Z",
+  "session_ids": [
+    "opencode:ses_f9121d414ffeyDaMC8FJdnH2B0",
+    "opencode:ses_f90e7bdd1ffeG1c7tOqACeZRep"
+  ],
+  "session_origins": {
+    "opencode:ses_f9121d414ffeyDaMC8FJdnH2B0": "direct",
+    "opencode:ses_f90e7bdd1ffeG1c7tOqACeZRep": "appended"
+  },
+  "plan_name": "ucf-vpn-split-tunnel",
+  "task_sessions": {},
+  "agent": "atlas",
+  "ended_at": "2026-09-05T15:09:42.305Z",
+  "elapsed_ms": 51202214
+}
