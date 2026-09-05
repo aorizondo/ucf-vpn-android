@@ -52,8 +52,9 @@ class SstpTunnelImpl(
         private const val SERVER = "npv.ucf.edu.cu"
         private const val PORT = 443
         private const val KEEPALIVE_INTERVAL_MS = 30_000L
-        private const val ECHO_REQUEST = 0x0008
-        private const val ECHO_RESPONSE = 0x0009
+
+        /** CERT_HASH_PROTOCOL_SHA1 (MS-SSTP 2.2.9). SHA256 would be 0x02. */
+        private const val CERT_HASH_PROTOCOL_SHA1: Byte = 0x01
     }
 
     private var handshake: SstpHandshake? = null
@@ -236,8 +237,11 @@ class SstpTunnelImpl(
         val controlHeader = byteArrayOf(0x00, 0x04, 0x00, 0x01)
         val attrHeader = byteArrayOf(0x00, 0x04, 0x00, 0x68)
 
-        // Hash Protocol Bitmask: 0x01 = SHA1
-        val attrValuePrefix = ByteArray(4) + nonce + certHash
+        // Attribute value layout (MS-SSTP 2.2.9): Reserved(3) +
+        // HashProtocolBitmask(1) + Nonce(32) + CertHash(32) + CompoundMAC(32).
+        // The bitmask byte was being left at 0x00, which tells the server
+        // "no hash protocol" instead of SHA1.
+        val attrValuePrefix = byteArrayOf(0x00, 0x00, 0x00, CERT_HASH_PROTOCOL_SHA1) + nonce + certHash
 
         // 6. Compound MAC (HMAC-SHA1 over full packet with MAC field zeroed)
         val packetToSign = sstpHeader + controlHeader + attrHeader + attrValuePrefix + ByteArray(32)

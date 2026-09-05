@@ -193,6 +193,16 @@ class ProxyAuthService(
             .add("manual", "Crear una sesion para este dispositivo")
             .build()
         executePost(portalHome, sessionBody)
+
+        // Step 5: confirm we are actually logged in.
+        //
+        // A Django portal answers HTTP 200 with the login form re-rendered when
+        // the credentials are wrong, so `response.isSuccessful` alone would
+        // report success for a rejected password. Asking the portal where it
+        // sends us is the only reliable check.
+        if (isSessionExpired()) {
+            throw IOException("Portal login rejected: credentials appear to be invalid")
+        }
     }
 
     private suspend fun fetchCsrfToken(url: String): String {

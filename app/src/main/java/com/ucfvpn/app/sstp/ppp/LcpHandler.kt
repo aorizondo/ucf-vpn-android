@@ -6,7 +6,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.receiveCatching
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.security.SecureRandom
@@ -51,6 +50,13 @@ class LcpHandler(
     private var controlJob: Job? = null
 
     /**
+     * Identifier of the Configure-Request currently in flight. Kept across
+     * retransmissions and cleared whenever [options] changes, so the next
+     * request gets a fresh id.
+     */
+    private var requestId: Int? = null
+
+    /**
      * Negotiate the LCP link.
      *
      * @return the negotiated magic number once the link is OPENED
@@ -61,27 +67,44 @@ class LcpHandler(
         state = LcpState.REQ_SENT
         clientReady = false
         serverReady = false
+        requestId = null
         magicNumber = SecureRandom().nextInt()
         options.clear()
         options.add(PppOption(PppConstants.OPTION_MRU, byteArrayOf(0x05, 0x78))) // 1400
         options.add(PppOption(PppConstants.OPTION_MAGIC_NUMBER, intToBytes(magicNumber)))
-        options.add(PppOption(PppConstants.OPTION_AUTH_PROTOCOL, byteArrayOf(0xC0.toByte(), 0x23))) // PAP
+        // NOTE: no Authentication-Protocol option here. Per RFC 1661 §6.2 that
+        // option is sent by the side DEMANDING authentication — the server. A
+        // client asking for it is telling the server "authenticate yourself to
+        // me", which typically earns a Configure-Reject and kills the link.
+        // Which auth protocol we must speak is read from the server's own
+        // Configure-Request, in [handleServerConfigureRequest].
 
-        var attempts = 0
+        // Retransmission is driven by silence, not by traffic: `attempts` counts
+        // only elapsed timeouts. Counting every received frame as an attempt
+        // exhausted the budget during a perfectly healthy negotiation.
+        sendConfigureRequest()
+        var attempts = 1
+
         while (true) {
-            if (attempts > maxAttempts) {
-                throw PppNegotiationException(
-                    "LCP negotiation failed: no response after ${maxAttempts + 1} attempts"
-                )
-            }
-            sendConfigureRequest()
-            attempts++
+            val frame = mailbox.receiveFrame(retransmitMs)
 
-            val frame = mailbox.receiveFrame(retransmitMs) ?: continue
+            if (frame == null) {
+                if (attempts > maxAttempts) {
+                    throw PppNegotiationException(
+                        "LCP negotiation failed: no response after ${maxAttempts + 1} attempts"
+                    )
+                }
+                sendConfigureRequest() // same Identifier — this is a retransmission
+                attempts++
+                continue
+            }
 
             when (frame.code) {
                 PppConstants.CODE_CONFIGURE_ACK -> {
-                    if (clientReady) {
+                    if (frame.id != requestId) {
+                        // Ack for a superseded request: ignore, keep waiting.
+                        Timber.d("LCP: stale Configure-Ack id=${frame.id} (expected $requestId)")
+                    } else if (clientReady) {
                         // Server restarted the negotiation: reset and resend
                         Timber.d("LCP: duplicate Configure-Ack, server restarted negotiation")
                         clientReady = false
@@ -96,15 +119,27 @@ class LcpHandler(
                         }
                     }
                 }
-                PppConstants.CODE_CONFIGURE_NAK -> handleConfigureNak(frame)
-                PppConstants.CODE_CONFIGURE_REJECT -> handleConfigureReject(frame)
+                PppConstants.CODE_CONFIGURE_NAK -> {
+                    handleConfigureNak(frame)
+                    // Options changed → new request, new Identifier, fresh budget.
+                    requestId = null
+                    sendConfigureRequest()
+                    attempts = 1
+                }
+                PppConstants.CODE_CONFIGURE_REJECT -> {
+                    handleConfigureReject(frame)
+                    requestId = null
+                    sendConfigureRequest()
+                    attempts = 1
+                }
                 PppConstants.CODE_CONFIGURE_REQUEST -> {
-                    serverReady = true
-                    state = LcpState.ACK_SENT
-                    sendConfigureAck(frame)
-                    if (clientReady) {
-                        openLink()
-                        return LcpResult(magicNumber)
+                    if (handleServerConfigureRequest(frame)) {
+                        serverReady = true
+                        state = LcpState.ACK_SENT
+                        if (clientReady) {
+                            openLink()
+                            return LcpResult(magicNumber)
+                        }
                     }
                 }
                 PppConstants.CODE_TERMINATE_REQUEST -> {
@@ -165,9 +200,77 @@ class LcpHandler(
         }
     }
 
+    /**
+     * Handle a Configure-Request sent by the server.
+     *
+     * The server's request is what tells us which authentication protocol it
+     * demands, so its options must be inspected rather than blanket-acked.
+     * Acking an MS-CHAPv2 request and then speaking PAP just stalls the link
+     * until it times out.
+     *
+     * @return true if the request was acknowledged (the server's side is now
+     * configured), false if we had to Nak/Reject and must wait for a new request.
+     * @throws PppNegotiationException if the server demands an auth protocol we
+     * cannot speak.
+     */
+    private fun handleServerConfigureRequest(frame: PppFrame): Boolean {
+        val serverOptions = parseOptions(frame.data)
+        val unsupported = mutableListOf<PppOption>()
+
+        for (opt in serverOptions) {
+            when (opt.type) {
+                PppConstants.OPTION_AUTH_PROTOCOL -> {
+                    val authProtocol = if (opt.data.size >= 2) readShort(opt.data, 0) else -1
+                    when (authProtocol) {
+                        PppConstants.AUTH_PROTOCOL_PAP -> {
+                            Timber.d("LCP: server requests PAP authentication")
+                        }
+                        PppConstants.AUTH_PROTOCOL_MSCHAPV2 -> throw PppNegotiationException(
+                            "LCP: server requires MS-CHAPv2 (0xC223), which is not supported"
+                        )
+                        else -> throw PppNegotiationException(
+                            "LCP: server requires unsupported auth protocol 0x%04x".format(authProtocol)
+                        )
+                    }
+                }
+                // MRU and Magic-Number are always acceptable as sent by the peer.
+                PppConstants.OPTION_MRU, PppConstants.OPTION_MAGIC_NUMBER -> Unit
+                // Anything else (compression, ACCM, callback, ...) we do not
+                // implement, so it must be rejected rather than silently acked.
+                else -> unsupported.add(opt)
+            }
+        }
+
+        if (unsupported.isNotEmpty()) {
+            Timber.d("LCP: rejecting ${unsupported.size} unsupported server option(s)")
+            sendFrame(
+                buildPppFrame(
+                    PppConstants.PROTOCOL_LCP,
+                    PppConstants.CODE_CONFIGURE_REJECT,
+                    frame.id,
+                    buildOptions(unsupported)
+                )
+            )
+            return false
+        }
+
+        sendConfigureAck(frame)
+        return true
+    }
+
+    /**
+     * Send the current Configure-Request.
+     *
+     * Retransmissions reuse the same Identifier (RFC 1661 §5.1): a fresh id per
+     * attempt makes the peer's Ack ambiguous. A new id is only taken when the
+     * option set actually changes (after a Nak or Reject).
+     */
     private fun sendConfigureRequest() {
+        if (requestId == null) {
+            requestId = nextId()
+        }
         val data = buildOptions(options)
-        sendFrame(buildPppFrame(PppConstants.PROTOCOL_LCP, PppConstants.CODE_CONFIGURE_REQUEST, nextId(), data))
+        sendFrame(buildPppFrame(PppConstants.PROTOCOL_LCP, PppConstants.CODE_CONFIGURE_REQUEST, requestId!!, data))
     }
 
     private fun sendConfigureAck(request: PppFrame) {
@@ -183,23 +286,15 @@ class LcpHandler(
     }
 
     /**
-     * Apply the server's suggested values from a Configure-Nak and resend.
-     * MS-CHAPv2 (0xC223) is detected here and rejected, as it is not supported.
+     * Apply the server's suggested values from a Configure-Nak.
+     *
+     * The caller resends the request afterwards. Auth-Protocol is not handled
+     * here: we no longer offer that option, so the server has nothing to Nak —
+     * its own demand arrives in [handleServerConfigureRequest] instead.
      */
     private fun handleConfigureNak(frame: PppFrame) {
         for (opt in parseOptions(frame.data)) {
             when (opt.type) {
-                PppConstants.OPTION_AUTH_PROTOCOL -> {
-                    if (opt.data.size >= 2) {
-                        val authProtocol = readShort(opt.data, 0)
-                        if (authProtocol == PppConstants.AUTH_PROTOCOL_MSCHAPV2) {
-                            throw PppNegotiationException(
-                                "LCP: server requires MS-CHAPv2 (0xC223), which is not supported"
-                            )
-                        }
-                        // PAP (0xC023) is already what we send; nothing to change
-                    }
-                }
                 PppConstants.OPTION_MRU -> {
                     if (opt.data.size >= 2) {
                         val mru = readShort(opt.data, 0)
@@ -213,25 +308,23 @@ class LcpHandler(
                     }
                 }
                 PppConstants.OPTION_MAGIC_NUMBER -> {
-                    if (opt.data.size >= 4) {
-                        magicNumber = readInt(opt.data, 0)
-                        options.removeAll { it.type == PppConstants.OPTION_MAGIC_NUMBER }
-                        options.add(PppOption(PppConstants.OPTION_MAGIC_NUMBER, intToBytes(magicNumber)))
-                    }
+                    // A Nak on Magic-Number means it collided with the peer's.
+                    // RFC 1661 §6.4 says to pick a NEW random number — adopting
+                    // the value the peer suggested would just collide again.
+                    magicNumber = SecureRandom().nextInt()
+                    options.removeAll { it.type == PppConstants.OPTION_MAGIC_NUMBER }
+                    options.add(PppOption(PppConstants.OPTION_MAGIC_NUMBER, intToBytes(magicNumber)))
                 }
             }
         }
     }
 
     /**
-     * Remove rejected options from a Configure-Reject and resend.
-     * A rejected Auth-Protocol is fatal: without authentication the link cannot proceed.
+     * Remove rejected options from a Configure-Reject; the caller then resends.
      */
     private fun handleConfigureReject(frame: PppFrame) {
         for (opt in parseOptions(frame.data)) {
             when (opt.type) {
-                PppConstants.OPTION_AUTH_PROTOCOL ->
-                    throw PppNegotiationException("LCP: server rejected Auth-Protocol option")
                 PppConstants.OPTION_MRU -> options.removeAll { it.type == PppConstants.OPTION_MRU }
                 PppConstants.OPTION_MAGIC_NUMBER -> options.removeAll { it.type == PppConstants.OPTION_MAGIC_NUMBER }
             }

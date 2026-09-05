@@ -5,6 +5,12 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.BIND_VPN_SERVICE" />
 
+    <!-- VpnGatewayService.onStartCommand() calls startForeground(); without
+         FOREGROUND_SERVICE that throws SecurityException on API 28+. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- The ongoing VPN notification is not shown on API 33+ without this. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"

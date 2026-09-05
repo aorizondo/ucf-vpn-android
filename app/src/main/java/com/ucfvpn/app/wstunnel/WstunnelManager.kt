@@ -175,13 +175,26 @@ class WstunnelManager(
                 .directory(context.filesDir)
                 .redirectErrorStream(false)
 
-            process = pb.start()
+            val started = pb.start()
+            process = started
+
+            // Start log-capture threads before the liveness check, so a crash
+            // banner on stderr still reaches Logcat.
+            stdoutThread = captureOutput(started.inputStream, "$TAG/stdout")
+            stderrThread = captureOutput(started.errorStream, "$TAG/stderr")
+
+            // A launch failure (wrong ABI, bad arguments, SELinux denial on exec)
+            // shows up as an immediate exit, not as an exception from start().
+            // Without this check the manager reports RUNNING for a dead process.
+            delay(LAUNCH_SETTLE_MS)
+            if (!started.isAlive) {
+                val msg = "wstunnel exited immediately (code ${started.exitValue()})"
+                Log.e(TAG, msg)
+                _state.value = WstunnelState.ERROR
+                return@withContext Result.failure(IllegalStateException(msg))
+            }
+
             _state.value = WstunnelState.RUNNING
-
-            // Start log-capture threads
-            stdoutThread = captureOutput(process!!.inputStream, "$TAG/stdout")
-            stderrThread = captureOutput(process!!.errorStream, "$TAG/stderr")
-
             Log.i(TAG, "wstunnel started")
             Result.success(Unit)
         } catch (e: Exception) {
@@ -364,6 +377,9 @@ class WstunnelManager(
     companion object {
         private const val TAG = "wstunnel"
         private const val MAX_LOG_LINES = 200
+
+        /** Grace period before checking that the freshly launched process survived. */
+        private const val LAUNCH_SETTLE_MS = 300L
 
         /** Connect timeout per SOCKS5 probe attempt. */
         private const val SOCKS5_PROBE_CONNECT_TIMEOUT_MS = 500

@@ -3,7 +3,6 @@ package com.ucfvpn.app.sstp.ppp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.receiveCatching
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
@@ -253,7 +252,8 @@ data class IpcpResult(val localIp: String, val dns1: String, val dns2: String)
 /**
  * Final result of a full PPP negotiation (LCP → PAP → IPCP).
  *
- * In PPP the peer is the gateway, so [gateway] equals [localIp].
+ * [gateway] is the PEER's address, learned from the server's own IPCP
+ * Configure-Request — not our own [localIp].
  */
 data class PppResult(
     val localIp: String,
@@ -356,9 +356,11 @@ class PppStack(
         val papResult = pap.authenticate(username, password)
         Timber.d("PAP authentication complete: $papResult")
 
+        var peerGateway = ""
         val ipcp = IpCpHandler(
             sendFrame = { frame -> sendFrame?.invoke(frame) },
             onIpCpSuccess = { localIp, dns1, dns2, gateway ->
+                peerGateway = gateway
                 onEvent?.invoke(PppEvent.IpAssigned(localIp, dns1, dns2, gateway))
             },
             retransmitMs = retransmitMs,
@@ -368,7 +370,7 @@ class PppStack(
         val ipcpResult = ipcp.negotiate()
         Timber.d("IPCP negotiation complete: $ipcpResult")
 
-        return PppResult(ipcpResult.localIp, ipcpResult.dns1, ipcpResult.dns2, ipcpResult.localIp)
+        return PppResult(ipcpResult.localIp, ipcpResult.dns1, ipcpResult.dns2, peerGateway)
     }
 
     /**

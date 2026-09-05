@@ -7,6 +7,7 @@ import com.ucfvpn.app.sstp.protocol.SstpProtocol
 import com.ucfvpn.app.sstp.protocol.createCallConnectRequest
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
@@ -126,10 +127,21 @@ class SstpHandshake(
 
         // Protect the socket BEFORE connecting so its traffic bypasses the
         // VPN tunnel (prevents the VPN → SSTP → VPN traffic loop).
+        //
+        // The bind() is required, not cosmetic: a freshly constructed Socket has
+        // no underlying file descriptor yet, and VpnService.protect() needs one.
+        // Binding to port 0 forces the fd to be created while leaving the port
+        // choice to the OS. This is the order documented in VpnGatewayService.
         socketProtector?.let { protector ->
-            val protected = protector.protect(rawSocket)
-            if (!protected) {
-                Timber.w("Socket protection failed for $server:$port — continuing unprotected")
+            rawSocket.bind(InetSocketAddress(0))
+            if (!protector.protect(rawSocket)) {
+                // Connecting unprotected while the VPN is up would route the SSTP
+                // socket back into its own tunnel. Fail loudly instead.
+                rawSocket.close()
+                throw IOException(
+                    "VpnService.protect() failed for $server:$port — refusing to " +
+                        "connect unprotected (would create a VPN traffic loop)"
+                )
             }
         }
 

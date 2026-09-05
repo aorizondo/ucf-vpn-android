@@ -20,9 +20,11 @@ import com.ucfvpn.app.wstunnel.WstunnelState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -49,6 +51,9 @@ data class AppConfig(
     val proxyPassword: String,
     val wstunnelConfig: WstunnelConfig = WstunnelConfig(),
     val splitTunnelConfig: SplitTunnelConfig = SplitTunnelConfig(),
+
+    /** When false, a failed connection is not retried automatically. */
+    val autoReconnect: Boolean = true,
 
     /** Debug flag: kept for UiConfig compatibility. The Fase 5 sequence always uses SOCKS5. */
     val debugWstunnelSocks5: Boolean = false,
@@ -133,17 +138,18 @@ class VpnOrchestrator(
     // ── Public API ────────────────────────────────────────────────
     // ─────────────────────────────────────────────────────────────
 
+    // NOTE: `scope` is declared before every property whose initialiser uses it.
+    // Kotlin runs property initialisers in declaration order, so referencing a
+    // property declared further down (even from inside an inlined `also { }`)
+    // reads it while it is still null and crashes the constructor.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
     /** Current VPN state from the state machine */
     val state: StateFlow<VpnState> = stateMachine.state
 
     /** Connection state mapped for UI consumption */
-    val connectionState: StateFlow<ConnectionState> = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected).also { flow ->
-        scope.launch {
-            stateMachine.state.collect { vpnState ->
-                flow.value = mapToConnectionState(vpnState)
-            }
-        }
-    }
+    private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
+    val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
     /** Circular log buffer of connection events for UI display */
     private val _connectionLog = MutableStateFlow<List<String>>(emptyList())
@@ -156,7 +162,6 @@ class VpnOrchestrator(
     // ── Private fields ────────────────────────────────────────────
     // ─────────────────────────────────────────────────────────────
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val mutex = Mutex()
     private val logMutex = Mutex()
 
@@ -181,9 +186,10 @@ class VpnOrchestrator(
     // ─────────────────────────────────────────────────────────────
 
     init {
-        // Observe state machine and emit logs on state transitions
+        // Observe state machine: map to the UI-facing ConnectionState and emit logs
         scope.launch {
             stateMachine.state.collect { vpnState ->
+                _connectionState.value = mapToConnectionState(vpnState)
                 emitLog("INFO", "State: ${vpnState.displayName}")
             }
         }
@@ -250,8 +256,10 @@ class VpnOrchestrator(
         config = appConfig
         clearLog()
 
-        // Enable reconnect if manager is available
-        stateMachine.setReconnectEnabled(true)
+        // Honour the user's auto-reconnect preference instead of forcing it on.
+        // With it forced, a wrong password retried forever — a real risk of
+        // locking the institutional account.
+        stateMachine.setReconnectEnabled(appConfig.autoReconnect)
 
         // Start the connection sequence in a coroutine
         connectionJob = scope.launch {
@@ -292,29 +300,36 @@ class VpnOrchestrator(
         Timber.tag(TAG).d("Stopping VPN stack...")
         emitLog("INFO", "Initiating clean shutdown...")
 
-        // Cancel connection/reconnect jobs
+        // Stop the reconnect loop before cancelling jobs, so it cannot restart
+        // the sequence underneath us.
+        reconnectManager.stop()
+
+        // Cancel connection/reconnect jobs. NOTE: stop() is often invoked from
+        // INSIDE connectionJob (via handleConnectionError), so cancelling it
+        // here cancels the very coroutine running this function. Everything
+        // below must therefore be uncancellable, or the cleanup would abort at
+        // its first suspension point and leak the wstunnel process and the TUN.
         connectionJob?.cancel()
         reconnectJob?.cancel()
 
-        // Stop reconnect manager
-        reconnectManager.stop()
+        withContext(NonCancellable) {
+            try {
+                // Cleanup sequence (in reverse order)
+                cleanupVpnService()
+                cleanupWstunnel()
+                cleanupProxyAuth()
+                cleanupSstp()
 
-        try {
-            // Cleanup sequence (in reverse order)
-            cleanupVpnService()
-            cleanupWstunnel()
-            cleanupProxyAuth()
-            cleanupSstp()
-
-            emitLog("INFO", "VPN stack stopped cleanly")
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Error during cleanup")
-            emitLog("ERROR", "Shutdown error: ${e.message}")
-        } finally {
-            isRunning = false
-            config = null
-            lastErrorStage = null
-            stateMachine.disconnect()
+                emitLog("INFO", "VPN stack stopped cleanly")
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Error during cleanup")
+                emitLog("ERROR", "Shutdown error: ${e.message}")
+            } finally {
+                isRunning = false
+                config = null
+                lastErrorStage = null
+                stateMachine.disconnect()
+            }
         }
     }
 
@@ -379,11 +394,10 @@ class VpnOrchestrator(
             if (isRunning) {
                 stop()
             }
-        }
-        scope.launch {
-            // Cancel after a brief delay to allow cleanup
-            delay(100)
-            this@VpnOrchestrator.scope.cancel()
+            // Cancel only AFTER the cleanup has actually finished. The previous
+            // version cancelled the scope on a fixed 100 ms timer, which cut the
+            // shutdown short and left the wstunnel process and TUN behind.
+            scope.cancel()
         }
     }
 
@@ -418,6 +432,7 @@ class VpnOrchestrator(
                 bypassApps = parseCsvList(uiConfig.bypassApps),
                 defaultViaProxy = uiConfig.defaultViaProxy
             ),
+            autoReconnect = uiConfig.autoReconnect,
             debugWstunnelSocks5 = uiConfig.debugWstunnelSocks5,
             ignoreSslErrors = uiConfig.ignoreSslErrors
         )
@@ -714,8 +729,15 @@ class VpnOrchestrator(
     private suspend fun handleConnectionError(error: Exception) {
         emitLog("ERROR", error.message ?: "Unknown error")
 
-        // If reconnect is enabled, start reconnect loop
-        if (stateMachine.isReconnectEnabled() && reconnectManager != null) {
+        // Credentials are not going to fix themselves by retrying, and hammering
+        // the server with a wrong password risks locking the account.
+        if (isAuthenticationFailure(error)) {
+            emitLog("ERROR", "Authentication rejected — not retrying. Check your credentials.")
+            stop()
+            return
+        }
+
+        if (stateMachine.isReconnectEnabled()) {
             emitLog("INFO", "Reconnect enabled, starting reconnect loop...")
 
             reconnectJob = scope.launch {
@@ -726,6 +748,17 @@ class VpnOrchestrator(
             emitLog("INFO", "No reconnect enabled, shutting down...")
             stop()
         }
+    }
+
+    /**
+     * True when [error] means the server rejected our credentials, as opposed to
+     * a transient network fault. Retrying the former is useless and harmful.
+     */
+    private fun isAuthenticationFailure(error: Exception): Boolean {
+        val message = error.message ?: return false
+        return message.contains("PAP authentication failed", ignoreCase = true) ||
+            message.contains("MS-CHAPv2", ignoreCase = true) ||
+            lastErrorStage == "Proxy"
     }
 
     // ── Cleanup sequence ───────────────────────────────────────────

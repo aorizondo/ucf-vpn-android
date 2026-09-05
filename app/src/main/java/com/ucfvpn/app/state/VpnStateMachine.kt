@@ -120,7 +120,11 @@ class VpnStateMachine {
             is VpnState.WireGuardConnecting -> to == VpnState.WireGuardConnected || to is VpnState.WireGuardError
             is VpnState.WireGuardConnected -> to == VpnState.VpnStarting
             is VpnState.VpnStarting -> to == VpnState.VpnRunning || to is VpnState.WireGuardError
-            is VpnState.VpnRunning -> false // Must disconnect explicitly
+            // A live tunnel can drop: it must be able to report the failure and
+            // to restart the sequence. Allowing only Disconnected here made
+            // auto-reconnect impossible (ReconnectManager restarts from
+            // SstpConnecting) and left the UI showing "connected" after a drop.
+            is VpnState.VpnRunning -> to == VpnState.SstpConnecting || to.isError
             is VpnState.SstpError ->
                 to == VpnState.SstpConnecting || to == VpnState.Disconnected || to is VpnState.PppNegotiating
             is VpnState.ProxyError ->

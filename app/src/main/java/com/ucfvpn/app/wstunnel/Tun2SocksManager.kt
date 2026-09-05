@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -103,13 +104,27 @@ class Tun2SocksManager(private val context: Context) {
                 .directory(context.filesDir)
                 .redirectErrorStream(false)
 
-            process = pb.start()
+            val started = pb.start()
+            process = started
+
+            // Start log-capture threads before the liveness check, so a crash
+            // banner on stderr still reaches Logcat.
+            stdoutThread = captureOutput(started.inputStream, "$TAG/stdout")
+            stderrThread = captureOutput(started.errorStream, "$TAG/stderr")
+
+            // A launch failure (wrong ABI, unreadable config, SELinux denial on
+            // exec) shows up as an immediate exit, not as an exception from
+            // start(). Give the process a moment and confirm it is still alive
+            // before reporting success.
+            delay(LAUNCH_SETTLE_MS)
+            if (!started.isAlive) {
+                val msg = "hev-socks5-tunnel exited immediately (code ${started.exitValue()})"
+                Log.e(TAG, msg)
+                _state.value = Tun2SocksState.ERROR
+                return@withContext Result.failure(IllegalStateException(msg))
+            }
+
             _state.value = Tun2SocksState.RUNNING
-
-            // Start log-capture threads
-            stdoutThread = captureOutput(process!!.inputStream, "$TAG/stdout")
-            stderrThread = captureOutput(process!!.errorStream, "$TAG/stderr")
-
             Log.i(TAG, "hev-socks5-tunnel started")
             Result.success(Unit)
         } catch (e: Exception) {
@@ -234,6 +249,9 @@ class Tun2SocksManager(private val context: Context) {
     companion object {
         private const val TAG = "tun2socks"
         private const val MAX_LOG_LINES = 200
+
+        /** Grace period before checking that the freshly launched process survived. */
+        private const val LAUNCH_SETTLE_MS = 300L
 
         /** Regex matching lines that should be logged at ERROR level. */
         private val ERROR_PATTERN = Regex(

@@ -212,7 +212,7 @@ class VpnStateMachineTest {
     }
 
     @Test
-    fun `VpnRunning cannot transition to any state except Disconnected`() = runTest {
+    fun `VpnRunning can only disconnect, report an error, or restart the sequence`() = runTest {
         stateMachine.transition(VpnState.SstpConnecting)
         stateMachine.transition(VpnState.SstpConnected)
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.LCP))
@@ -247,8 +247,36 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.VpnRunning)
 
-        assertFalse(stateMachine.transition(VpnState.SstpConnecting))
+        // A live tunnel that drops must be able to restart the sequence,
+        // otherwise ReconnectManager can never reconnect.
+        assertTrue(stateMachine.transition(VpnState.SstpConnecting))
+
+        // But it cannot jump backwards into an arbitrary mid-stack state.
         assertFalse(stateMachine.transition(VpnState.WstunnelRunning(1080)))
+    }
+
+    @Test
+    fun `VpnRunning can report a dropped tunnel as an error`() = runTest {
+        driveToVpnRunning()
+
+        assertTrue(stateMachine.transition(VpnState.SstpError("tunnel dropped")))
+        assertEquals(VpnState.SstpError("tunnel dropped"), stateMachine.state.value)
+    }
+
+    /** Walk the full happy path so tests can start from a live tunnel. */
+    private suspend fun driveToVpnRunning() {
+        stateMachine.transition(VpnState.SstpConnecting)
+        stateMachine.transition(VpnState.SstpConnected)
+        stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.LCP))
+        stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
+        stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
+        stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.ProxyAuthenticating)
+        stateMachine.transition(VpnState.ProxyAuthenticated)
+        stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
+        stateMachine.transition(VpnState.WstunnelRunning(1080))
+        stateMachine.transition(VpnState.VpnStarting)
+        stateMachine.transition(VpnState.VpnRunning)
     }
 
     @Test

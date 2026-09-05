@@ -12,7 +12,7 @@ import timber.log.Timber
  *
  * @param sendFrame delivers raw PPP frames to the SSTP tunnel
  * @param onIpCpSuccess invoked with (localIp, dns1, dns2, gateway) when IPCP opens;
- * in PPP the peer is the gateway, so gateway == localIp
+ * gateway is the peer's address, taken from the server's own Configure-Request
  * @param retransmitMs interval between Configure-Request retransmissions
  * @param maxAttempts maximum retransmissions before giving up (total sends = maxAttempts + 1)
  */
@@ -27,7 +27,14 @@ class IpCpHandler(
     private var localIp: ByteArray = ByteArray(4)
     private var dns1: ByteArray = ByteArray(4)
     private var dns2: ByteArray = ByteArray(4)
+
+    /** Peer (gateway) address, learned from the server's own Configure-Request. */
+    private var peerIp: ByteArray = ByteArray(4)
+
     private var idCounter = 0
+
+    /** Identifier of the in-flight Configure-Request; see [LcpHandler.requestId]. */
+    private var requestId: Int? = null
 
     /**
      * Negotiate the IPCP link.
@@ -36,30 +43,75 @@ class IpCpHandler(
      * @throws PppNegotiationException on timeout
      */
     suspend fun negotiate(): IpcpResult {
-        var attempts = 0
-        while (true) {
-            if (attempts > maxAttempts) {
-                throw PppNegotiationException(
-                    "IPCP negotiation failed: no response after ${maxAttempts + 1} attempts"
-                )
-            }
-            sendConfigureRequest()
-            attempts++
+        // As in LCP, `attempts` counts elapsed timeouts only.
+        sendConfigureRequest()
+        var attempts = 1
 
-            val frame = mailbox.receiveFrame(retransmitMs) ?: continue
+        while (true) {
+            val frame = mailbox.receiveFrame(retransmitMs)
+
+            if (frame == null) {
+                if (attempts > maxAttempts) {
+                    throw PppNegotiationException(
+                        "IPCP negotiation failed: no response after ${maxAttempts + 1} attempts"
+                    )
+                }
+                sendConfigureRequest() // same Identifier — retransmission
+                attempts++
+                continue
+            }
 
             when (frame.code) {
                 PppConstants.CODE_CONFIGURE_ACK -> {
+                    if (frame.id != requestId) {
+                        Timber.d("IPCP: stale Configure-Ack id=${frame.id} (expected $requestId)")
+                        continue
+                    }
                     val result = IpcpResult(ipToString(localIp), ipToString(dns1), ipToString(dns2))
                     Timber.d("IPCP: link OPENED (ip=%s dns1=%s dns2=%s)", result.localIp, result.dns1, result.dns2)
-                    onIpCpSuccess(result.localIp, result.dns1, result.dns2, result.localIp)
+                    onIpCpSuccess(result.localIp, result.dns1, result.dns2, ipToString(peerIp))
                     return result
                 }
-                PppConstants.CODE_CONFIGURE_NAK -> applyNak(frame)
-                PppConstants.CODE_CONFIGURE_REJECT -> applyReject(frame)
+                PppConstants.CODE_CONFIGURE_NAK -> {
+                    applyNak(frame)
+                    requestId = null // options changed → new Identifier
+                    sendConfigureRequest()
+                    attempts = 1
+                }
+                PppConstants.CODE_CONFIGURE_REJECT -> {
+                    applyReject(frame)
+                    requestId = null
+                    sendConfigureRequest()
+                    attempts = 1
+                }
+                // IPCP is bidirectional: the server sends its OWN Configure-Request
+                // carrying its IP address, and many servers will not open the link
+                // until it is acknowledged. Ignoring it stalled us until timeout.
+                PppConstants.CODE_CONFIGURE_REQUEST -> handleServerConfigureRequest(frame)
                 else -> Timber.d("IPCP: ignoring code ${frame.code}")
             }
         }
+    }
+
+    /**
+     * Acknowledge the server's Configure-Request, recording its IP-Address
+     * option as the peer address (the tunnel's gateway).
+     */
+    private fun handleServerConfigureRequest(frame: PppFrame) {
+        for (opt in parseOptions(frame.data)) {
+            if (opt.type == PppConstants.OPTION_IPCP_IP && opt.data.size == 4) {
+                peerIp = opt.data
+                Timber.d("IPCP: peer address is %s", ipToString(peerIp))
+            }
+        }
+        sendFrame(
+            buildPppFrame(
+                PppConstants.PROTOCOL_IPCP,
+                PppConstants.CODE_CONFIGURE_ACK,
+                frame.id,
+                frame.data
+            )
+        )
     }
 
     /**
@@ -79,12 +131,15 @@ class IpCpHandler(
     }
 
     private fun sendConfigureRequest() {
+        if (requestId == null) {
+            requestId = nextId()
+        }
         val options = listOf(
             PppOption(PppConstants.OPTION_IPCP_IP, localIp),
             PppOption(PppConstants.OPTION_IPCP_DNS_PRIMARY, dns1),
             PppOption(PppConstants.OPTION_IPCP_DNS_SECONDARY, dns2)
         )
-        sendFrame(buildPppFrame(PppConstants.PROTOCOL_IPCP, PppConstants.CODE_CONFIGURE_REQUEST, nextId(), buildOptions(options)))
+        sendFrame(buildPppFrame(PppConstants.PROTOCOL_IPCP, PppConstants.CODE_CONFIGURE_REQUEST, requestId!!, buildOptions(options)))
     }
 
     /**

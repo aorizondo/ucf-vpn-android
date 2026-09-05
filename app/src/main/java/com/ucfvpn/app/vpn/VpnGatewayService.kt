@@ -224,10 +224,10 @@ class VpnGatewayService : VpnService() {
      * - Default route (0.0.0.0/0, and ::/0 on Android 10+) → TUN →
      *   hev-socks5-tunnel → wstunnel SOCKS5 → HTTP proxy
      *
-     * Unlike [establishTunInterface], this does NOT call
-     * [android.net.VpnService.Builder.addDisallowedApplication]: in split
-     * tunnel mode the 10.14.0.0/16 route already resolves the captive portal
-     * through the SSTP tunnel, so the app does not need to bypass the VPN.
+     * Like [establishTunInterface], this calls
+     * [android.net.VpnService.Builder.addDisallowedApplication] for our own
+     * package: the wstunnel subprocess shares this app's UID, so it must bypass
+     * the VPN or it would be routed into the tunnel it serves.
      *
      * @param privateNetworks CIDR networks routed through the SSTP tunnel
      * @param address The tunnel IP address (e.g., "10.0.0.1")
@@ -266,11 +266,28 @@ class VpnGatewayService : VpnService() {
             builder.addRoute("::", 0)
         }
 
+        // CRITICAL: exclude this app from the VPN.
+        //
+        // The wstunnel subprocess runs under this app's UID, so without this
+        // exclusion the default route above captures wstunnel's own socket and
+        // feeds it back into the tunnel it is supposed to serve. The captive
+        // portal route (10.14.0.0/16) closes the same circle: TUN →
+        // hev-socks5-tunnel → wstunnel → 10.14.0.13, which is wstunnel's own
+        // upstream proxy.
+        //
+        // Starting wstunnel before establish() does NOT prevent this: protect()
+        // marks a socket, it is not a function of when the socket was created,
+        // and any new connection the subprocess opens is routed through the VPN.
+        builder.addDisallowedApplication(packageName)
+
         // Add DNS servers
         for (dns in dnsServers) {
             builder.addDnsServer(dns)
         }
 
+        // Close any interface left over from a previous attempt before replacing
+        // the field, otherwise the old descriptor leaks.
+        tunInterface?.close()
         tunInterface = builder.establish()
         Timber.tag(TAG).d("Split TUN interface established: ${tunInterface != null}")
 
@@ -443,10 +460,20 @@ class VpnGatewayService : VpnService() {
             return startResult
         }
 
-        // 4. Verify hev-socks5-tunnel reached RUNNING state
-        if (manager.state.value != Tun2SocksState.RUNNING) {
-            val msg = "hev-socks5-tunnel did not reach RUNNING state (current: ${manager.state.value})"
+        // 4. Verify hev-socks5-tunnel is actually alive.
+        //
+        // Checking `state == RUNNING` alone is tautological: start() sets RUNNING
+        // unconditionally right before returning success, so the check can never
+        // fail. isAlive() asks the OS instead, which catches a binary that died
+        // on launch (wrong ABI, bad config, SELinux denial).
+        if (!manager.isRunning()) {
+            val msg = "hev-socks5-tunnel exited immediately after launch"
             Timber.tag(TAG).e(msg)
+            // Leaving the TUN up here would blackhole ALL device traffic: the
+            // interface holds the default route with nothing serving it.
+            manager.stop()
+            tunFd.close()
+            tunInterface = null
             return Result.failure(Exception(msg))
         }
 

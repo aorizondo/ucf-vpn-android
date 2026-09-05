@@ -85,7 +85,10 @@ class PapHandler(
     private fun sendAuthenticateRequest(username: String, password: String) {
         val userBytes = username.toByteArray(Charsets.UTF_8)
         val passBytes = password.toByteArray(Charsets.UTF_8)
-        val data = ByteArray(2 + userBytes.size + 2 + passBytes.size)
+        // Peer-ID-Length and Passwd-Length are ONE byte each (RFC 1334 §2.2.1).
+        // Sizing this buffer with 2 bytes per length left two zero bytes of
+        // padding at the end and inflated the frame's Length field.
+        val data = ByteArray(1 + userBytes.size + 1 + passBytes.size)
         var offset = 0
         data[offset++] = userBytes.size.toByte()
         userBytes.copyInto(data, offset)
