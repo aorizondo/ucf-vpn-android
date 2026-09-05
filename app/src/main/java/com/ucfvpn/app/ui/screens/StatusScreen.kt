@@ -7,6 +7,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -185,14 +187,25 @@ fun StatusScreen(viewModel: VpnViewModel) {
             TopAppBar(title = { Text("VPN Status") })
         }
     ) { paddingValues ->
+        // The status content scrolls and the action button is pinned below it.
+        // Previously everything sat in one non-scrollable Column ending in a
+        // weight(1f) spacer, so on a short screen the indicator and the stack
+        // card pushed the Connect button off-screen and it could not be tapped
+        // at all.
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .padding(16.dp)
         ) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
             Spacer(modifier = Modifier.height(16.dp))
 
             // Connection Indicator
@@ -231,10 +244,11 @@ fun StatusScreen(viewModel: VpnViewModel) {
             if (connectionState is ConnectionState.Connected) {
                 ConnectedTimeCounter(connectedSince = connectedSince)
             }
+            } // end of scrollable content
 
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            // Connect / Disconnect button
+            // Connect / Disconnect button — always visible, never scrolled away
             Button(
                 onClick = {
                     when (connectionState) {

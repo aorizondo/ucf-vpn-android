@@ -3,14 +3,16 @@ package com.ucfvpn.app.ui
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
-import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import com.ucfvpn.app.state.ConnectionState
 import org.junit.Rule
 import org.junit.Test
 
 class MainActivityTest {
+
+    // The tab icons carry their contentDescription inside NavigationBarItem,
+    // which merges its children's semantics. The nodes therefore only exist in
+    // the unmerged tree, so every finder below needs useUnmergedTree = true.
 
     @get:Rule
     val composeTestRule = createAndroidComposeRule<MainActivity>()
@@ -24,17 +26,19 @@ class MainActivityTest {
     @Test
     fun configScreen_rendersFormFields() {
         // Navigate to Config tab
-        composeTestRule.onNodeWithContentDescription("Config").performClick()
+        composeTestRule.onNodeWithContentDescription("Config", useUnmergedTree = true).performClick()
 
-        // Verify form fields are displayed
+        // Only what is on screen can be asserted as displayed.
         composeTestRule.onNodeWithText("Configuration").assertIsDisplayed()
         composeTestRule.onNodeWithText("SSTP Configuration").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Save Configuration").assertIsDisplayed()
 
-        // Expand all sections and verify fields
-        composeTestRule.onNodeWithText("Proxy Configuration").assertIsDisplayed()
-        composeTestRule.onNodeWithText("wstunnel Configuration").assertIsDisplayed()
-        composeTestRule.onNodeWithText("WireGuard Configuration").assertIsDisplayed()
+        // The rest of the form lives below the fold: ConfigScreen is a scrolling
+        // column, so asserting "displayed" on sections further down could never
+        // pass. Existence in the tree is the right assertion here.
+        composeTestRule.onNodeWithText("Proxy Configuration").assertExists()
+        composeTestRule.onNodeWithText("wstunnel Configuration").assertExists()
+        composeTestRule.onNodeWithText("Split Tunnel Configuration").assertExists()
+        composeTestRule.onNodeWithText("Save Configuration").assertExists()
     }
 
     @Test
@@ -43,22 +47,22 @@ class MainActivityTest {
         composeTestRule.onNodeWithText("VPN Status").assertIsDisplayed()
 
         // Switch to Config tab
-        composeTestRule.onNodeWithContentDescription("Config").performClick()
+        composeTestRule.onNodeWithContentDescription("Config", useUnmergedTree = true).performClick()
         composeTestRule.onNodeWithText("Configuration").assertIsDisplayed()
 
         // Switch to Logs tab
-        composeTestRule.onNodeWithContentDescription("Logs").performClick()
+        composeTestRule.onNodeWithContentDescription("Logs", useUnmergedTree = true).performClick()
         composeTestRule.onNodeWithText("Connection Logs").assertIsDisplayed()
 
         // Switch back to Status
-        composeTestRule.onNodeWithContentDescription("Status").performClick()
+        composeTestRule.onNodeWithContentDescription("Status", useUnmergedTree = true).performClick()
         composeTestRule.onNodeWithText("VPN Status").assertIsDisplayed()
     }
 
     @Test
     fun logScreen_showsEmptyState() {
         // Navigate to Logs tab
-        composeTestRule.onNodeWithContentDescription("Logs").performClick()
+        composeTestRule.onNodeWithContentDescription("Logs", useUnmergedTree = true).performClick()
 
         composeTestRule.onNodeWithText("Connection Logs").assertIsDisplayed()
         composeTestRule.onNodeWithText("No log entries yet").assertIsDisplayed()
