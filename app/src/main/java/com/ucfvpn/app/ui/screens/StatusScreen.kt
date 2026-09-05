@@ -175,6 +175,7 @@ fun computeStackStages(vpnState: VpnState): List<Pair<String, StackStageIcon>> {
 fun StatusScreen(viewModel: VpnViewModel) {
     val connectionState by viewModel.connectionState.collectAsState()
     val vpnState by viewModel.vpnState.collectAsState()
+    val connectedSince by viewModel.connectedSince.collectAsState()
 
     // Dynamic stack stages from the state machine
     val stages = remember(vpnState) { computeStackStages(vpnState) }
@@ -228,7 +229,7 @@ fun StatusScreen(viewModel: VpnViewModel) {
 
             // Connected time counter
             if (connectionState is ConnectionState.Connected) {
-                ConnectedTimeCounter()
+                ConnectedTimeCounter(connectedSince = connectedSince)
             }
 
             Spacer(modifier = Modifier.weight(1f))
@@ -443,17 +444,30 @@ fun StackStageRow(label: String, icon: StackStageIcon) {
     }
 }
 
+/**
+ * Uptime of the current tunnel.
+ *
+ * Derived from [connectedSince], the instant the orchestrator reported
+ * VpnRunning. The counter used to start at zero whenever this composable
+ * entered composition and reset on every recomposition that remounted it, so
+ * the elapsed time it displayed was unrelated to the actual connection.
+ *
+ * @param connectedSince epoch millis when the tunnel came up, or null if down
+ */
 @Composable
-fun ConnectedTimeCounter() {
-    var elapsedSeconds by remember { mutableLongStateOf(0L) }
+fun ConnectedTimeCounter(connectedSince: Long?) {
+    if (connectedSince == null) return
 
-    LaunchedEffect(Unit) {
+    var now by remember(connectedSince) { mutableLongStateOf(System.currentTimeMillis()) }
+
+    LaunchedEffect(connectedSince) {
         while (true) {
             delay(1000L)
-            elapsedSeconds++
+            now = System.currentTimeMillis()
         }
     }
 
+    val elapsedSeconds = ((now - connectedSince) / 1000).coerceAtLeast(0L)
     val hours = elapsedSeconds / 3600
     val minutes = (elapsedSeconds % 3600) / 60
     val seconds = elapsedSeconds % 60

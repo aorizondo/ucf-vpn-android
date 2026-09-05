@@ -102,6 +102,9 @@ class VpnViewModel(
     /** Full VPN state-machine state for detailed stack visualization. */
     val vpnState: StateFlow<VpnState> = orchestrator.state
 
+    /** Epoch millis when the tunnel came up, or null while it is down. */
+    val connectedSince: StateFlow<Long?> = orchestrator.connectedSince
+
     /** Connection log as a newline-separated string for LogScreen. */
     val connectionLog: StateFlow<String> = MutableStateFlow("").also { flow ->
         viewModelScope.launch {

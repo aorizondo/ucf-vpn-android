@@ -152,6 +152,15 @@ class VpnOrchestrator(
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
+    /**
+     * Wall-clock time the tunnel came up, or null when it is not running.
+     *
+     * The UI needs an anchor to show real uptime: without it the counter could
+     * only start from zero whenever its composable entered composition.
+     */
+    private val _connectedSince = MutableStateFlow<Long?>(null)
+    val connectedSince: StateFlow<Long?> = _connectedSince.asStateFlow()
+
     /** Circular log buffer of connection events for UI display */
     private val _connectionLog = MutableStateFlow<List<String>>(emptyList())
     val connectionLog: StateFlow<List<String>> = _connectionLog.asStateFlow()
@@ -191,6 +200,12 @@ class VpnOrchestrator(
         scope.launch {
             stateMachine.state.collect { vpnState ->
                 _connectionState.value = mapToConnectionState(vpnState)
+                _connectedSince.value = when {
+                    vpnState !is VpnState.VpnRunning -> null
+                    // Keep the original instant across repeated emissions.
+                    _connectedSince.value != null -> _connectedSince.value
+                    else -> System.currentTimeMillis()
+                }
                 emitLog("INFO", "State: ${vpnState.displayName}")
             }
         }

@@ -99,7 +99,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: heiher/hev-socks5-tunnel
-          ref: 2.7.9
+          ref: "2.17.1"
           submodules: recursive
           path: hev-src
 
@@ -116,41 +116,31 @@ jobs:
             echo "NDK_HOME=${ANDROID_HOME}/ndk/26.1.10909125" >> "${GITHUB_ENV}"
           fi
 
+      # Android.mk defines two modules: a JNI shared library and
+      # `hev-socks5-tunnel-bin`, a standalone executable. Tun2SocksManager
+      # launches a subprocess, so the executable is the one we need.
       - name: Build for arm64 and armv7
         working-directory: hev-src
         run: |
           set -eux
-          for abi in arm64-v8a armeabi-v7a; do
-            make clean || true
-            ndk-build -C . \
-              NDK_PROJECT_PATH=. \
-              APP_BUILD_SCRIPT=Android.mk \
-              APP_ABI="${abi}" \
-              APP_PLATFORM=android-26 \
-              NDK_LIBS_OUT=./libs \
-              NDK_OUT=./obj \
-              --jobs "$(nproc)" || \
-            make -j"$(nproc)" \
-              CROSS_PREFIX="${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/"
-          done
-        env:
-          PATH: ${{ env.NDK_HOME }}:${{ env.PATH }}
+          "${NDK_HOME}/ndk-build" \
+            NDK_PROJECT_PATH=. \
+            APP_BUILD_SCRIPT=Android.mk \
+            APP_ABI="arm64-v8a armeabi-v7a" \
+            APP_PLATFORM=android-26 \
+            NDK_LIBS_OUT=./libs \
+            NDK_OUT=./obj \
+            -j"$(nproc)"
 
       - name: Collect binaries
         working-directory: hev-src
         run: |
           set -eux
           mkdir -p ../hev-dist
-          # The build output location differs between ndk-build and make; take
-          # whichever produced an ELF and fail loudly if neither did.
-          find . -name "hev-socks5-tunnel" -o -name "libhev-socks5-tunnel.so" | tee /tmp/found.txt
-          test -s /tmp/found.txt
           for abi in arm64-v8a armeabi-v7a; do
-            src="$(find ./libs/"${abi}" -type f | head -n1 || true)"
-            if [ -n "${src}" ]; then cp "${src}" "../hev-dist/hev_${abi}"; fi
+            cp "libs/${abi}/hev-socks5-tunnel-bin" "../hev-dist/hev_${abi}"
           done
-          ls -la ../hev-dist
-          file ../hev-dist/* || true
+          file ../hev-dist/*
 
       - name: Upload hev-socks5-tunnel binaries
         uses: actions/upload-artifact@v4
