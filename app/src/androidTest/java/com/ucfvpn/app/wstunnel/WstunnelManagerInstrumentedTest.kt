@@ -53,7 +53,7 @@ class WstunnelManagerInstrumentedTest {
     // ──────────────────────────────────────────────────────
 
     @Test
-    fun `start fails cleanly when no binary is packaged for this ABI`() {
+    fun startFailsCleanlyWhenNoBinaryIsPackagedForThisABI() {
         // Only meaningful where the ABI is unsupported (e.g. the x86_64 emulator).
         if (nativeBinary().exists()) return
 
@@ -70,7 +70,7 @@ class WstunnelManagerInstrumentedTest {
     }
 
     @Test
-    fun `packaged binary is executable and never copied into filesDir`() {
+    fun packagedBinaryIsExecutableAndNeverCopiedIntoFilesDir() {
         val binary = nativeBinary()
         if (!binary.exists()) return // ABI not packaged; covered by the test above
 
@@ -85,7 +85,7 @@ class WstunnelManagerInstrumentedTest {
     }
 
     @Test
-    fun `start rejects an invalid server URL`() {
+    fun startRejectsAnInvalidServerURL() {
         // Only reachable where the binary resolves, since resolution comes first.
         if (!nativeBinary().exists()) return
 
@@ -104,7 +104,7 @@ class WstunnelManagerInstrumentedTest {
     // ──────────────────────────────────────────────────────
 
     @Test
-    fun `stop without running process transitions to STOPPED`() {
+    fun stopWithoutRunningProcessTransitionsToSTOPPED() {
         runBlocking { manager.stop() }
 
         assertEquals(

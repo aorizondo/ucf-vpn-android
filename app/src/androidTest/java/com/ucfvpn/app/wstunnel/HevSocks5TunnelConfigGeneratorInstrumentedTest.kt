@@ -37,7 +37,7 @@ class HevSocks5TunnelConfigGeneratorInstrumentedTest {
     }
 
     @Test
-    fun `generate writes YAML to filesDir with default content`() {
+    fun generateWritesYAMLToFilesDirWithDefaultContent() {
         val result = HevSocks5TunnelConfigGenerator.generate(context)
 
         assertTrue("generate should succeed", result.isSuccess)
@@ -67,7 +67,7 @@ class HevSocks5TunnelConfigGeneratorInstrumentedTest {
     }
 
     @Test
-    fun `generate writes custom socks5 port and dnsViaSocks5 false`() {
+    fun generateWritesCustomSocks5PortAndDnsViaSocks5False() {
         val result = HevSocks5TunnelConfigGenerator.generate(
             context,
             socks5Host = "127.0.0.1",
@@ -87,7 +87,7 @@ class HevSocks5TunnelConfigGeneratorInstrumentedTest {
     }
 
     @Test
-    fun `generate returns failure for invalid socks5 port`() {
+    fun generateReturnsFailureForInvalidSocks5Port() {
         val result = HevSocks5TunnelConfigGenerator.generate(context, socks5Port = 0)
 
         assertTrue("Invalid port should produce a failure", result.isFailure)

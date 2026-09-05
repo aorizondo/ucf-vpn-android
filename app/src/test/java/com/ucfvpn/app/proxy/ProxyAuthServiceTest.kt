@@ -82,7 +82,14 @@ class ProxyAuthServiceTest {
         assertEquals("POST", req4.method)
         val body4 = req4.body.readUtf8()
         assertTrue(body4.contains("csrfmiddlewaretoken=csrf-2"))
-        assertTrue(body4.contains("manual=Crear+una+sesion+para+este+dispositivo"))
+        // Decode before matching: OkHttp's FormBody percent-encodes spaces as
+        // %20, so asserting on the "+" form failed even though the field was
+        // correct. URLDecoder accepts both spellings.
+        val decodedBody4 = java.net.URLDecoder.decode(body4, "UTF-8")
+        assertTrue(
+            "session POST should carry the manual field, was: $decodedBody4",
+            decodedBody4.contains("manual=Crear una sesion para este dispositivo")
+        )
 
         // Request 5: GET / — confirms the session is real rather than trusting
         // the 200 from request 4.

@@ -55,7 +55,7 @@ class WireGuardConfigRepositoryInstrumentedTest {
     // ──────────────────────────────────────────────────────
 
     @Test
-    fun `private key is stored and retrievable from Android Keystore`() {
+    fun privateKeyIsStoredAndRetrievableFromAndroidKeystore() {
         val saved = repository.savePrivateKey(testPrivateKey)
         assertTrue("savePrivateKey should succeed", saved)
 
@@ -65,7 +65,7 @@ class WireGuardConfigRepositoryInstrumentedTest {
     }
 
     @Test
-    fun `private key survives multiple loads`() {
+    fun privateKeySurvivesMultipleLoads() {
         repository.savePrivateKey(testPrivateKey)
 
         // Load multiple times to verify persistence
@@ -76,13 +76,13 @@ class WireGuardConfigRepositoryInstrumentedTest {
     }
 
     @Test
-    fun `loadPrivateKey returns null when not stored`() {
+    fun loadPrivateKeyReturnsNullWhenNotStored() {
         val loaded = repository.loadPrivateKey()
         assertNull("loadPrivateKey should return null when nothing is stored", loaded)
     }
 
     @Test
-    fun `clearKeys removes private key from Keystore`() {
+    fun clearKeysRemovesPrivateKeyFromKeystore() {
         repository.savePrivateKey(testPrivateKey)
         repository.clearKeys()
 
@@ -95,7 +95,7 @@ class WireGuardConfigRepositoryInstrumentedTest {
     // ──────────────────────────────────────────────────────
 
     @Test
-    fun `pre-shared key is stored and retrievable from Android Keystore`() {
+    fun preSharedKeyIsStoredAndRetrievableFromAndroidKeystore() {
         val saved = repository.savePresharedKey(testPresharedKey)
         assertTrue("savePresharedKey should succeed", saved)
 
@@ -105,13 +105,13 @@ class WireGuardConfigRepositoryInstrumentedTest {
     }
 
     @Test
-    fun `loadPresharedKey returns null when not stored`() {
+    fun loadPresharedKeyReturnsNullWhenNotStored() {
         val loaded = repository.loadPresharedKey()
         assertNull("loadPresharedKey should return null when nothing is stored", loaded)
     }
 
     @Test
-    fun `clearKeys removes pre-shared key from Keystore`() {
+    fun clearKeysRemovesPreSharedKeyFromKeystore() {
         repository.savePresharedKey(testPresharedKey)
         repository.clearKeys()
 
@@ -124,7 +124,7 @@ class WireGuardConfigRepositoryInstrumentedTest {
     // ──────────────────────────────────────────────────────
 
     @Test
-    fun `saveConfig and loadConfig full roundtrip with Keystore`() {
+    fun saveConfigAndLoadConfigFullRoundtripWithKeystore() {
         repository.saveConfig(testConfig)
 
         val loaded = repository.loadConfig()
@@ -144,31 +144,31 @@ class WireGuardConfigRepositoryInstrumentedTest {
     }
 
     @Test
-    fun `loadConfig returns null when not configured`() {
+    fun loadConfigReturnsNullWhenNotConfigured() {
         val loaded = repository.loadConfig()
         assertNull("loadConfig should return null before any config is saved", loaded)
     }
 
     @Test
-    fun `isConfigured returns false when not configured`() {
+    fun isConfiguredReturnsFalseWhenNotConfigured() {
         assertFalse("isConfigured should be false", repository.isConfigured())
     }
 
     @Test
-    fun `isConfigured returns true after saveConfig`() {
+    fun isConfiguredReturnsTrueAfterSaveConfig() {
         repository.saveConfig(testConfig)
         assertTrue("isConfigured should be true after saving config", repository.isConfigured())
     }
 
     @Test
-    fun `isConfigured returns false after deleteConfig`() {
+    fun isConfiguredReturnsFalseAfterDeleteConfig() {
         repository.saveConfig(testConfig)
         repository.deleteConfig()
         assertFalse("isConfigured should be false after delete", repository.isConfigured())
     }
 
     @Test
-    fun `deleteConfig clears Keystore keys and preferences`() {
+    fun deleteConfigClearsKeystoreKeysAndPreferences() {
         repository.saveConfig(testConfig)
         repository.deleteConfig()
 
@@ -182,7 +182,7 @@ class WireGuardConfigRepositoryInstrumentedTest {
     // ──────────────────────────────────────────────────────
 
     @Test
-    fun `config without PreSharedKey roundtrips correctly`() {
+    fun configWithoutPreSharedKeyRoundtripsCorrectly() {
         val configWithoutPsk = testConfig.copy(
             peerPresharedKey = null,
             privateKey = "anotherKey12345678901234567890123456="
@@ -201,7 +201,7 @@ class WireGuardConfigRepositoryInstrumentedTest {
     // ──────────────────────────────────────────────────────
 
     @Test
-    fun `private key and pre-shared key are stored independently`() {
+    fun privateKeyAndPreSharedKeyAreStoredIndependently() {
         // Save only private key, not pre-shared
         repository.savePrivateKey(testPrivateKey)
 

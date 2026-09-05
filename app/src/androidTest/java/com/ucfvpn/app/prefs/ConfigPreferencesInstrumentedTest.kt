@@ -87,7 +87,7 @@ class ConfigPreferencesInstrumentedTest {
     // ──────────────────────────────────────────────────────
 
     @Test
-    fun `save and load roundtrips every UiConfig field`() {
+    fun saveAndLoadRoundtripsEveryUiConfigField() {
         prefs.save(fullConfig)
 
         val loaded = prefs.load()
@@ -131,19 +131,19 @@ class ConfigPreferencesInstrumentedTest {
     }
 
     @Test
-    fun `save and load roundtrips defaultViaProxy true`() {
+    fun saveAndLoadRoundtripsDefaultViaProxyTrue() {
         prefs.save(fullConfig.copy(defaultViaProxy = true))
         assertTrue("defaultViaProxy true should roundtrip", prefs.load().defaultViaProxy)
     }
 
     @Test
-    fun `save and load roundtrips proxyType HTTP`() {
+    fun saveAndLoadRoundtripsProxyTypeHTTP() {
         prefs.save(fullConfig.copy(proxyType = ProxyType.HTTP))
         assertEquals(ProxyType.HTTP, prefs.load().proxyType)
     }
 
     @Test
-    fun `save and load roundtrips empty bypassApps`() {
+    fun saveAndLoadRoundtripsEmptyBypassApps() {
         prefs.save(fullConfig.copy(bypassApps = ""))
         assertEquals("", prefs.load().bypassApps)
     }
@@ -153,7 +153,7 @@ class ConfigPreferencesInstrumentedTest {
     // ──────────────────────────────────────────────────────
 
     @Test
-    fun `load returns defaults when nothing is saved`() {
+    fun loadReturnsDefaultsWhenNothingIsSaved() {
         val loaded = prefs.load()
         val defaults = UiConfig()
 
@@ -178,7 +178,7 @@ class ConfigPreferencesInstrumentedTest {
     // ──────────────────────────────────────────────────────
 
     @Test
-    fun `load falls back to default proxyType when persisted value is invalid`() {
+    fun loadFallsBackToDefaultProxyTypeWhenPersistedValueIsInvalid() {
         // Write an invalid enum name directly into the encrypted prefs to exercise the
         // private parseProxyType fallback path (ProxyType.valueOf throws).
         encryptedPrefs(context)
@@ -195,7 +195,7 @@ class ConfigPreferencesInstrumentedTest {
     }
 
     @Test
-    fun `load falls back to default wstunnelMode when persisted value is invalid`() {
+    fun loadFallsBackToDefaultWstunnelModeWhenPersistedValueIsInvalid() {
         encryptedPrefs(context)
             .edit()
             .putString("ucf_ws_mode", "BOGUS_MODE")
