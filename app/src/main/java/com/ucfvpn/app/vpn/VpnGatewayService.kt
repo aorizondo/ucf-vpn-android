@@ -266,7 +266,8 @@ class VpnGatewayService : VpnService() {
         address: String = "10.0.0.1",
         prefixLength: Int = 24,
         mtu: Int = 1300,
-        dnsServers: List<String> = listOf("1.1.1.1", "8.8.8.8")
+        dnsServers: List<String> = listOf("1.1.1.1", "8.8.8.8"),
+        bypassApps: List<String> = emptyList()
     ): ParcelFileDescriptor? {
         Timber.tag(TAG).d("Establishing split TUN interface: address=$address/$prefixLength mtu=$mtu")
 
@@ -303,6 +304,18 @@ class VpnGatewayService : VpnService() {
         // marks a socket, it is not a function of when the socket was created,
         // and any new connection the subprocess opens is routed through the VPN.
         builder.addDisallowedApplication(packageName)
+
+        // User-selected apps that should bypass the VPN entirely.
+        for (pkg in bypassApps) {
+            if (pkg == packageName) continue // already excluded above
+            try {
+                builder.addDisallowedApplication(pkg)
+            } catch (e: android.content.pm.PackageManager.NameNotFoundException) {
+                // An uninstalled package would otherwise abort the whole
+                // connection; skipping it is the sane outcome.
+                Timber.tag(TAG).w("Bypass app not installed, ignoring: $pkg")
+            }
+        }
 
         // Add DNS servers
         for (dns in dnsServers) {
@@ -423,7 +436,8 @@ class VpnGatewayService : VpnService() {
         privateNetworks: List<String> = listOf("10.0.0.0/8", "192.168.0.0/16", "172.16.0.0/12"),
         socks5Proxy: String = "127.0.0.1:1080",
         vpnConfig: VpnConfig = VpnConfig.DEFAULT,
-        dnsViaSocks5: Boolean = true
+        dnsViaSocks5: Boolean = true,
+        bypassApps: List<String> = emptyList()
     ): Result<Unit> {
         Timber.tag(TAG).d("Starting with split tunnel + hev-socks5-tunnel...")
 
@@ -448,7 +462,8 @@ class VpnGatewayService : VpnService() {
                 address = vpnConfig.address,
                 prefixLength = vpnConfig.prefixLength,
                 mtu = vpnConfig.mtu,
-                dnsServers = vpnConfig.dnsServers
+                dnsServers = vpnConfig.dnsServers,
+                bypassApps = bypassApps
             )
         } catch (e: IllegalArgumentException) {
             Timber.tag(TAG).e(e, "Invalid split tunnel configuration")

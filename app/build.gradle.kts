@@ -66,6 +66,16 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        jniLibs {
+            // wstunnel and hev-socks5-tunnel are standalone executables shipped
+            // as `lib*.so` under jniLibs. Since Android 10 (targetSdk >= 29)
+            // SELinux forbids exec() of files in the app's data directory, so
+            // they cannot be copied to filesDir and run from there — they must
+            // be launched from applicationInfo.nativeLibraryDir. That directory
+            // only exists when the libraries are extracted at install time,
+            // which is what this flag forces.
+            useLegacyPackaging = true
+        }
     }
 }
 

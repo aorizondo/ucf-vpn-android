@@ -15,16 +15,18 @@ import java.io.InputStream
 import kotlin.concurrent.thread
 
 /**
- * Manages the lifecycle of the hev-socks5-tunnel ARM64 binary as a
- * subprocess on Android.
+ * Manages the lifecycle of the hev-socks5-tunnel binary as a subprocess on
+ * Android.
  *
  * This is used in Phase 2 (socks5+VPN testing) to route all device
  * traffic through a local SOCKS5 proxy (wstunnel) without WireGuard.
  *
  * ## Binary management
- * On first run the binary is extracted from `assets/hev_socks5_tunnel_arm64`
- * to `context.filesDir/hev_socks5_tunnel` and marked executable. Subsequent
- * runs reuse the already-extracted binary.
+ * The executable ships as `jniLibs/<abi>/libhev_socks5_tunnel.so` and is run
+ * straight from [android.content.pm.ApplicationInfo.nativeLibraryDir]. It is
+ * NOT copied to `filesDir`: since Android 10, an app with `targetSdk >= 29` is
+ * denied by SELinux from exec()ing anything inside its own writable data
+ * directory. The installer also picks the right ABI.
  *
  * ## Config file
  * The YAML config is generated dynamically via
@@ -58,8 +60,14 @@ class Tun2SocksManager(private val context: Context) {
     private var stdoutThread: Thread? = null
     private var stderrThread: Thread? = null
 
-    private val binaryName = "hev_socks5_tunnel"
-    private val binaryAssetPath = "hev_socks5_tunnel_arm64"
+    /**
+     * Absolute path of the hev-socks5-tunnel executable.
+     *
+     * Ships as `jniLibs/<abi>/libhev_socks5_tunnel.so`; see [resolveBinary] for
+     * why it is not extracted to `filesDir`.
+     */
+    private val binaryPath: File
+        get() = File(context.applicationInfo.nativeLibraryDir, BINARY_NAME)
 
     // ── Start ─────────────────────────────────────────────────────
 
@@ -82,7 +90,7 @@ class Tun2SocksManager(private val context: Context) {
 
             _state.value = Tun2SocksState.STARTING
 
-            val binary = extractBinary()
+            val binary = resolveBinary()
             val config = configPath ?: generateDynamicConfig()
 
             // Validate TUN fd
@@ -179,25 +187,24 @@ class Tun2SocksManager(private val context: Context) {
     // ── Binary extraction ─────────────────────────────────────────
 
     /**
-     * Ensure the ARM64 binary exists in the app's private files directory.
+     * Locate the hev-socks5-tunnel executable in the native library directory.
+     *
+     * Nothing is extracted or chmod'ed: since Android 10, an app with
+     * `targetSdk >= 29` is denied by SELinux from exec()ing anything inside its
+     * own writable data directory, so the previous copy-to-filesDir approach
+     * could not work regardless of whether the file was present.
+     *
+     * @throws IllegalStateException if the binary is missing for this ABI
      */
-    private fun extractBinary(): File {
-        val dest = File(context.filesDir, binaryName)
-
-        if (!dest.exists()) {
-            Log.i(TAG, "Extracting $binaryAssetPath → ${dest.absolutePath}")
-            context.assets.open(binaryAssetPath).use { input ->
-                dest.outputStream().use { output ->
-                    input.copyTo(output)
-                }
-            }
-
-            if (!dest.setExecutable(true)) {
-                Log.w(TAG, "setExecutable returned false — binary may still be usable")
-            }
+    private fun resolveBinary(): File {
+        val binary = binaryPath
+        if (!binary.exists()) {
+            throw IllegalStateException(
+                "hev-socks5-tunnel binary not found at ${binary.absolutePath} — " +
+                    "no build for this device ABI (${android.os.Build.SUPPORTED_ABIS.joinToString()})"
+            )
         }
-
-        return dest
+        return binary
     }
 
     /**
@@ -249,6 +256,9 @@ class Tun2SocksManager(private val context: Context) {
     companion object {
         private const val TAG = "tun2socks"
         private const val MAX_LOG_LINES = 200
+
+        /** File name under `jniLibs/<abi>/`; must keep the `lib*.so` shape to be installed. */
+        private const val BINARY_NAME = "libhev_socks5_tunnel.so"
 
         /** Grace period before checking that the freshly launched process survived. */
         private const val LAUNCH_SETTLE_MS = 300L

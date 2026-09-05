@@ -22,15 +22,17 @@ import kotlin.concurrent.thread
  * selected at runtime from the device ABI) as a subprocess on Android.
  *
  * ## Binary management
- * On first run the binary is extracted from `assets/wstunnel_arm64` or
- * `assets/wstunnel_armv7` (chosen via [android.os.Build.SUPPORTED_ABIS]) to
- * `context.filesDir` under the same ABI-suffixed name and marked executable.
- * Subsequent runs reuse the already-extracted binary.
+ * The executable ships as `jniLibs/<abi>/libwstunnel.so` and is run straight
+ * from [android.content.pm.ApplicationInfo.nativeLibraryDir]. It is NOT copied
+ * to `filesDir`: since Android 10, an app with `targetSdk >= 29` is denied by
+ * SELinux from exec()ing anything inside its own writable data directory, so
+ * the copy-and-chmod approach fails with "Permission denied" at launch. The
+ * installer also picks the right ABI, so no runtime selection is needed.
  *
  * ## Process lifecycle
- * - [start] extracts the binary, builds the argument list via
- *   [WstunnelConfig.buildCommand], launches a [ProcessBuilder], and attaches
- *   background readers for stdout / stderr.
+ * - [start] locates the binary, builds the argument list via
+ *   [WstunnelConfig.buildCommand], launches a [ProcessBuilder], attaches
+ *   background readers for stdout / stderr, and verifies the process survived.
  * - [stop] sends SIGTERM and waits up to 3 s before escalating to SIGKILL.
  *
  * ## State
@@ -106,16 +108,14 @@ class WstunnelManager(
     }
 
     /**
-     * Asset name of the wstunnel binary for the current device ABI.
+     * Absolute path of the wstunnel executable.
      *
-     * - armeabi-v7a (32-bit) → `wstunnel_armv7`
-     * - arm64-v8a and anything else → `wstunnel_arm64`
+     * It ships inside `jniLibs/<abi>/libwstunnel.so`, so the installer places
+     * the right ABI in [android.content.pm.ApplicationInfo.nativeLibraryDir] and
+     * no runtime ABI selection is needed.
      */
-    private val binaryAssetPath: String
-        get() = when {
-            Build.SUPPORTED_ABIS.any { it.startsWith("armeabi") } -> "wstunnel_armv7"
-            else -> "wstunnel_arm64"
-        }
+    private val binaryPath: File
+        get() = File(context.applicationInfo.nativeLibraryDir, BINARY_NAME)
 
     // ── Start ─────────────────────────────────────────────────────
 
@@ -154,7 +154,7 @@ class WstunnelManager(
                 )
             }
 
-            val binary = extractBinary()
+            val binary = resolveBinary()
 
             if (!config.isServerUrlValid) {
                 val msg = "Invalid server URL: ${config.serverUrl}"
@@ -307,33 +307,23 @@ class WstunnelManager(
     // ── Binary extraction ─────────────────────────────────────────
 
     /**
-     * Ensure the ABI-appropriate binary exists in the app's private files directory.
+     * Locate the wstunnel executable in the app's native library directory.
      *
-     * 1. Look for `{filesDir}/wstunnel_arm64` or `{filesDir}/wstunnel_armv7`
-     *    (matching the current device ABI).
-     * 2. If missing, copy from the matching asset.
-     * 3. Mark it executable.
+     * Nothing is extracted or chmod'ed: files under `nativeLibraryDir` are
+     * installed read-only and already executable, which is precisely why this
+     * is the only place an app with `targetSdk >= 29` may exec from.
      *
-     * The destination file name carries the ABI suffix so a binary extracted
-     * under a different ABI is never reused.
+     * @throws IllegalStateException if the binary is missing for this ABI
      */
-    private fun extractBinary(): File {
-        val dest = File(context.filesDir, binaryAssetPath)
-
-        if (!dest.exists()) {
-            Log.i(TAG, "Extracting $binaryAssetPath → ${dest.absolutePath}")
-            context.assets.open(binaryAssetPath).use { input ->
-                dest.outputStream().use { output ->
-                    input.copyTo(output)
-                }
-            }
-
-            if (!dest.setExecutable(true)) {
-                Log.w(TAG, "setExecutable returned false — binary may still be usable")
-            }
+    private fun resolveBinary(): File {
+        val binary = binaryPath
+        if (!binary.exists()) {
+            throw IllegalStateException(
+                "wstunnel binary not found at ${binary.absolutePath} — " +
+                    "no build for this device ABI (${Build.SUPPORTED_ABIS.joinToString()})"
+            )
         }
-
-        return dest
+        return binary
     }
 
     // ── Log capture ───────────────────────────────────────────────
@@ -377,6 +367,9 @@ class WstunnelManager(
     companion object {
         private const val TAG = "wstunnel"
         private const val MAX_LOG_LINES = 200
+
+        /** File name under `jniLibs/<abi>/`; must keep the `lib*.so` shape to be installed. */
+        private const val BINARY_NAME = "libwstunnel.so"
 
         /** Grace period before checking that the freshly launched process survived. */
         private const val LAUNCH_SETTLE_MS = 300L

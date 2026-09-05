@@ -447,14 +447,13 @@ class VpnOrchestrator(
      * the [AppConfig.wstunnelConfig] transport fields.
      */
     private fun buildSocks5Config(appConfig: AppConfig): WstunnelConfig {
-        val wstunnel = appConfig.wstunnelConfig
-        return WstunnelConfig.socks5(
-            localPort = WSTUNNEL_SOCKS5_PORT,
-            serverUrl = wstunnel.serverUrl,
-            proxyHost = wstunnel.proxyHost,
-            proxyPort = wstunnel.proxyPort,
-            proxyAuth = wstunnel.proxyAuth,
-            logLevel = wstunnel.logLevel
+        // copy() rather than a fresh WstunnelConfig: building one from scratch
+        // silently dropped retryMaxBackoff and websocketPingFrequency, so those
+        // fields in the settings screen had no effect on the real connection.
+        // Only the SOCKS5-specific bits are overridden here.
+        return appConfig.wstunnelConfig.copy(
+            tunnelType = TunnelType.SOCKS5,
+            localPort = WSTUNNEL_SOCKS5_PORT
         )
     }
 
@@ -585,7 +584,8 @@ class VpnOrchestrator(
 
             val vpnResult = vpnService.startWithSplitTunnelSocks5(
                 privateNetworks = appConfig.splitTunnelConfig.privateNetworks,
-                socks5Proxy = "127.0.0.1:$WSTUNNEL_SOCKS5_PORT"
+                socks5Proxy = "127.0.0.1:$WSTUNNEL_SOCKS5_PORT",
+                bypassApps = appConfig.splitTunnelConfig.bypassApps
             )
 
             if (vpnResult.isFailure) {

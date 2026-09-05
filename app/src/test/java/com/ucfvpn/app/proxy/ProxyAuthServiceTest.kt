@@ -2,6 +2,7 @@ package com.ucfvpn.app.proxy
 
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -48,7 +49,11 @@ class ProxyAuthServiceTest {
     fun `login makes exactly 5 HTTP requests in correct order`() = runTest {
         enqueueLoginResponses("csrf-1", "csrf-2")
 
-        service.login("u", "p")
+        val result = service.login("u", "p")
+        // Assert this first: if login failed, the request expectations below
+        // would block in takeRequest() and surface as an opaque test timeout.
+        assertTrue("login should succeed: ${result.exceptionOrNull()}", result.isSuccess)
+        assertEquals("login should issue 5 requests", 5, server.requestCount)
 
         // Request 1: GET /auth/login?next=/
         val req1 = server.takeRequest()
@@ -323,19 +328,24 @@ class ProxyAuthServiceTest {
     fun `authState starts IDLE and reaches AUTHENTICATED after login`() = runTest {
         assertEquals(ProxyAuthState.IDLE, service.authState.value)
 
+        // The collector runs on an unconfined dispatcher in backgroundScope: a
+        // plain launch{} on the standard test dispatcher does not resume until
+        // the next suspension point, and StateFlow conflates, so intermediate
+        // states such as AUTHENTICATING can be missed entirely. backgroundScope
+        // also gets cancelled automatically, so the endless collect cannot make
+        // runTest hang waiting for it.
         val stateLog = mutableListOf<ProxyAuthState>()
-        val collectorJob = launch {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             service.authState.collect { stateLog.add(it) }
         }
 
         enqueueLoginResponses("cs1", "cs2")
-        service.login("u", "p")
+        val result = service.login("u", "p")
 
+        assertTrue("login should succeed: ${result.exceptionOrNull()}", result.isSuccess)
         assertEquals(ProxyAuthState.AUTHENTICATED, service.authState.value)
         assertTrue("Should pass through AUTHENTICATING", stateLog.contains(ProxyAuthState.AUTHENTICATING))
         assertTrue("Should reach AUTHENTICATED", stateLog.contains(ProxyAuthState.AUTHENTICATED))
-
-        collectorJob.cancel()
     }
 
     @Test

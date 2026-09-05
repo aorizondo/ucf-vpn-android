@@ -1,7 +1,6 @@
 package com.ucfvpn.app.wstunnel
 
 import android.content.Context
-import android.os.Build
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.runBlocking
@@ -13,20 +12,18 @@ import org.junit.runner.RunWith
 import java.io.File
 
 /**
- * Instrumented tests for [WstunnelManager] binary extraction from assets.
+ * Instrumented tests for how [WstunnelManager] locates its executable.
  *
- * [WstunnelManager.extractBinary] is private, so the extraction is exercised
- * through the public [WstunnelManager.start] entry point. To keep the test
- * network-free and process-free on ANY ABI, we pass a config with an INVALID
- * server URL: `start()` extracts the binary FIRST (before the URL validity
- * check), then fails with [IllegalArgumentException] without ever spawning a
- * subprocess. The observable side effect — the ABI-appropriate binary copied
- * to filesDir and marked executable — is what we assert.
+ * The binary is no longer extracted from assets into `filesDir`: since Android
+ * 10, an app with `targetSdk >= 29` is denied by SELinux from exec()ing files in
+ * its own data directory, so it ships as `jniLibs/<abi>/libwstunnel.so` and runs
+ * from `applicationInfo.nativeLibraryDir`.
  *
- * Note: on the CI emulator (x86_64) the selected asset is `wstunnel_arm64`,
- * which is committed in `app/src/main/assets/`. On an armeabi-v7a device the
- * manager would look for `wstunnel_armv7`, which is NOT committed (it is
- * produced by the `build-wstunnel` CI job) — that path is out of scope here.
+ * That makes the outcome ABI-dependent, and both branches are worth asserting:
+ * the CI emulator is x86_64, for which no wstunnel build is packaged, so the
+ * manager must fail with a clear diagnostic rather than silently reporting
+ * success. On a device whose ABI IS packaged, the binary must be present and
+ * executable.
  *
  * Requires an Android device or emulator with API 26+.
  */
@@ -40,66 +37,66 @@ class WstunnelManagerInstrumentedTest {
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
         manager = WstunnelManager(context)
-        // Start clean for each test
-        File(context.filesDir, expectedBinaryName()).delete()
     }
 
     @After
     fun tearDown() {
         runBlocking { manager.stop() }
-        File(context.filesDir, expectedBinaryName()).delete()
     }
 
+    /** The executable as packaged for this device's ABI, if it was packaged at all. */
+    private fun nativeBinary(): File =
+        File(context.applicationInfo.nativeLibraryDir, "libwstunnel.so")
+
     // ──────────────────────────────────────────────────────
-    //  Binary extraction (via start() with invalid URL)
+    //  Binary resolution
     // ──────────────────────────────────────────────────────
 
     @Test
-    fun `start with invalid server URL extracts binary to filesDir`() {
-        val config = WstunnelConfig(serverUrl = "not-a-valid-url")
+    fun `start fails cleanly when no binary is packaged for this ABI`() {
+        // Only meaningful where the ABI is unsupported (e.g. the x86_64 emulator).
+        if (nativeBinary().exists()) return
 
-        val result = runBlocking { manager.start(config) }
+        val result = runBlocking { manager.start(WstunnelConfig()) }
 
-        // start() must fail on the invalid URL — and must NOT spawn a process.
+        assertTrue("start() must fail when the binary is absent", result.isFailure)
+        val message = result.exceptionOrNull()?.message ?: ""
+        assertTrue(
+            "The failure should name the missing binary, was: $message",
+            message.contains("wstunnel binary not found")
+        )
+        assertEquals(WstunnelState.ERROR, manager.state.value)
+        assertFalse("no process may be left behind", manager.isRunning())
+    }
+
+    @Test
+    fun `packaged binary is executable and never copied into filesDir`() {
+        val binary = nativeBinary()
+        if (!binary.exists()) return // ABI not packaged; covered by the test above
+
+        assertTrue("A packaged binary must be executable", binary.canExecute())
+
+        // Nothing must be written to filesDir: exec() from there is denied.
+        runBlocking { manager.start(WstunnelConfig(serverUrl = "not-a-valid-url")) }
+        assertFalse(
+            "the binary must not be copied into filesDir",
+            File(context.filesDir, "libwstunnel.so").exists()
+        )
+    }
+
+    @Test
+    fun `start rejects an invalid server URL`() {
+        // Only reachable where the binary resolves, since resolution comes first.
+        if (!nativeBinary().exists()) return
+
+        val result = runBlocking { manager.start(WstunnelConfig(serverUrl = "not-a-valid-url")) }
+
         assertTrue("start() should fail for an invalid server URL", result.isFailure)
         assertTrue(
             "Failure cause should be IllegalArgumentException",
             result.exceptionOrNull() is IllegalArgumentException
         )
-
-        // But the binary extraction (which happens before the URL check) must
-        // have left the ABI-appropriate binary in filesDir.
-        val binary = File(context.filesDir, expectedBinaryName())
-        assertTrue("Binary should be extracted to filesDir", binary.exists())
-        assertTrue("Extracted binary should be executable", binary.canExecute())
-
-        // The extracted file must be a byte-for-byte copy of the asset.
-        val assetBytes = context.assets.open(expectedBinaryName()).use { it.readBytes() }
-        assertEquals(
-            "Extracted binary size should match the asset size",
-            assetBytes.size.toLong(),
-            binary.length()
-        )
-
-        // The manager must have transitioned to ERROR after the failed start.
         assertEquals(WstunnelState.ERROR, manager.state.value)
-    }
-
-    @Test
-    fun `binary is not re-extracted when it already exists`() {
-        // First start extracts the binary.
-        runBlocking { manager.start(WstunnelConfig(serverUrl = "invalid")) }
-        val binary = File(context.filesDir, expectedBinaryName())
-        assertTrue("Binary should exist after first start", binary.exists())
-        val firstModified = binary.lastModified()
-
-        // Second start must reuse the existing binary (no re-extraction).
-        runBlocking { manager.start(WstunnelConfig(serverUrl = "invalid")) }
-        assertEquals(
-            "Existing binary should not be re-extracted",
-            firstModified,
-            binary.lastModified()
-        )
     }
 
     // ──────────────────────────────────────────────────────
@@ -117,20 +114,4 @@ class WstunnelManagerInstrumentedTest {
         )
         assertFalse("isRunning should be false", manager.isRunning())
     }
-
-    // ──────────────────────────────────────────────────────
-    //  Helpers
-    // ──────────────────────────────────────────────────────
-
-    /**
-     * Mirrors the private [WstunnelManager.binaryAssetPath] selection logic
-     * (documented in the manager KDoc): armeabi* → `wstunnel_armv7`, anything
-     * else → `wstunnel_arm64`.
-     */
-    private fun expectedBinaryName(): String =
-        if (Build.SUPPORTED_ABIS.any { it.startsWith("armeabi") }) {
-            "wstunnel_armv7"
-        } else {
-            "wstunnel_arm64"
-        }
 }
