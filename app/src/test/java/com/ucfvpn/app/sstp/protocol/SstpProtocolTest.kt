@@ -258,5 +258,8 @@ class SstpProtocolTest {
 
     // --- Helper extension ---
 
-    private fun ByteArray.toHexString(): String = joinToString("") { "%02X".format(it) }
+    // Lowercase: the expected values in this file are Python `.hex()` output,
+    // which is lowercase. The helper used "%02X", so every expectation
+    // containing a hex letter failed even though the bytes were correct.
+    private fun ByteArray.toHexString(): String = joinToString("") { "%02x".format(it) }
 }

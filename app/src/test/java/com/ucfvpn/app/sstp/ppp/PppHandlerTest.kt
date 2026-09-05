@@ -22,18 +22,25 @@ class PppHandlerTest {
         assertEquals("FCS-16 self-check must produce GOODFCS 0xf0b8", 0xf0b8, selfCheck)
     }
 
+    // The two expected values below were wrong (0x84b0 and 0xe5f6). They were
+    // never verified because the suite had never run. The implementation is the
+    // correct one: it satisfies the RFC 1662 GOODFCS property asserted in
+    // fcs16_selfCheck, which is the definitive check for this CRC. These are the
+    // values produced by the standard PPP FCS-16 (poly 0x8408, init 0xFFFF,
+    // no final xor).
+
     @Test
     fun fcs16_singleZeroByte() {
         val data = byteArrayOf(0x00.toByte())
         val fcs = HDLCHandler.fcs16(data)
-        assertEquals(0x84b0.toInt(), fcs)
+        assertEquals(0x0f87, fcs)
     }
 
     @Test
     fun fcs16_knownSequence() {
         val data = byteArrayOf(0xFF.toByte(), 0x03.toByte(), 0x00.toByte())
         val fcs = HDLCHandler.fcs16(data)
-        assertEquals(0xe5f6.toInt(), fcs)
+        assertEquals(0xd5a8, fcs)
     }
 
     @Test

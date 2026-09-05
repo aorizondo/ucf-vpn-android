@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.net.VpnService
+import android.os.Binder
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import com.ucfvpn.app.wg.WireGuardConfig
@@ -61,6 +62,29 @@ class VpnGatewayService : VpnService() {
     private var tunInterface: ParcelFileDescriptor? = null
     private var wireGuardManager: WireGuardManager? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    /**
+     * Binder handed to in-process clients (the Activity) so they can obtain the
+     * live service instance and pass it to the orchestrator.
+     */
+    inner class LocalBinder : Binder() {
+        val service: VpnGatewayService get() = this@VpnGatewayService
+    }
+
+    private val localBinder = LocalBinder()
+
+    /**
+     * The framework binds with the [SERVICE_INTERFACE] action to operate the VPN
+     * itself; that must go to [VpnService.onBind]. Any other binding is our own
+     * app asking for the instance.
+     */
+    override fun onBind(intent: android.content.Intent?): android.os.IBinder? {
+        return if (intent?.action == SERVICE_INTERFACE) {
+            super.onBind(intent)
+        } else {
+            localBinder
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()

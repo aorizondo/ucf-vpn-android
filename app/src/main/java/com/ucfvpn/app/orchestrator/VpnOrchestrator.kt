@@ -6,6 +6,7 @@ import com.ucfvpn.app.proxy.ProxyAuthState
 import com.ucfvpn.app.sstp.client.SstpState
 import com.ucfvpn.app.sstp.client.SstpTunnel
 import com.ucfvpn.app.sstp.client.SstpTunnelImpl
+import com.ucfvpn.app.sstp.ppp.PppEvent
 import com.ucfvpn.app.state.ConnectionState
 import com.ucfvpn.app.state.ReconnectManager
 import com.ucfvpn.app.state.ReconnectState
@@ -502,17 +503,13 @@ class VpnOrchestrator(
         emitLog("INFO", "SSTP: Waiting for PPP negotiation...")
 
         retryLayer("PPP", MAX_PPP_RETRIES, { VpnState.SstpError(it) }) {
-            // PPP phases are markers; the actual negotiation runs inside SstpTunnelImpl.
-            // The orchestrator has no PppStack reference, so it transitions through
-            // the phases and waits for the PPP IP assignment on the tunnel.
+            // The negotiation itself runs inside SstpTunnelImpl. The phase
+            // transitions below are driven by the real PppEvent callbacks
+            // installed in setupSstpCallbacks(), so what the UI shows matches
+            // where the negotiation actually is. Emitting all three phases up
+            // front made the progress display fiction.
             stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.LCP))
             emitLog("INFO", "PPP: LCP negotiation...")
-
-            stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
-            emitLog("INFO", "PPP: Authentication (PAP)...")
-
-            stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
-            emitLog("INFO", "PPP: IPCP negotiation...")
 
             val localIp = waitForPppIpAssignment()
             stateMachine.transition(VpnState.PppAuthenticated(localIp))
@@ -678,6 +675,28 @@ class VpnOrchestrator(
         sstpTunnel.onPppFrameReceived = { frame ->
             // PPP frames from SSTP are handled internally
             Timber.tag(TAG).d("SSTP: PPP frame received (${frame.size} bytes)")
+        }
+
+        // Real PPP milestones drive the phase display.
+        sstpTunnel.onPppEvent = { event ->
+            scope.launch {
+                when (event) {
+                    is PppEvent.LcpOpened -> {
+                        emitLog("INFO", "PPP: LCP opened, authenticating (PAP)...")
+                        stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
+                    }
+                    is PppEvent.AuthSuccess -> {
+                        emitLog("INFO", "PPP: Authenticated, negotiating IPCP...")
+                        stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
+                    }
+                    is PppEvent.IpAssigned -> {
+                        emitLog(
+                            "INFO",
+                            "PPP: IP ${event.localIp} (gw ${event.gateway}, dns ${event.dns1} ${event.dns2})"
+                        )
+                    }
+                }
+            }
         }
     }
 

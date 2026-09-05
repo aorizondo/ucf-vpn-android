@@ -8,6 +8,7 @@ import com.ucfvpn.app.sstp.protocol.createCallConnected
 import com.ucfvpn.app.sstp.protocol.createCryptoBindingAttribute
 import com.ucfvpn.app.sstp.protocol.createEchoRequest
 import com.ucfvpn.app.sstp.protocol.createPppDataPacket
+import com.ucfvpn.app.sstp.ppp.PppEvent
 import com.ucfvpn.app.sstp.ppp.PppStack
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -74,6 +75,7 @@ class SstpTunnelImpl(
     private var callbacks: SstpTunnelCallbacks? = null
     override var onPppFrameReceived: ((ByteArray) -> Unit)? = null
     override var onStateChanged: ((SstpState) -> Unit)? = null
+    override var onPppEvent: ((PppEvent) -> Unit)? = null
 
     override var localAddress: String? = null
         private set
@@ -164,6 +166,9 @@ class SstpTunnelImpl(
             // Negotiate PPP (LCP → PAP → IPCP)
             val stack = PppStack().apply {
                 sendFrame = { frame -> sendPppFrame(frame) }
+                // Forward real negotiation milestones so callers can report the
+                // phase the link is actually in.
+                onEvent = { event -> onPppEvent?.invoke(event) }
             }
             pppStack = stack
 

@@ -64,9 +64,18 @@ enum class SstpEncapsulatedProtocol(val value: Int) {
 data class SstpPacket(
     val version: Int = 0x01,
     val isControl: Boolean = true,
-    val length: Int = 0,
     val data: ByteArray = ByteArray(0)
 ) {
+    /**
+     * Total packet length in bytes, header included — the value [pack] writes
+     * into the header.
+     *
+     * This is derived rather than stored: as a constructor parameter it was
+     * ignored by [pack] (which always recomputed it) but populated by [unpack],
+     * so a pack/unpack roundtrip could never preserve it.
+     */
+    val length: Int get() = SstpProtocol.HEADER_SIZE + data.size
+
     /**
      * Pack SSTP packet to bytes.
      * byte[0] = 0x10 (version 1 indicator)
@@ -98,7 +107,7 @@ data class SstpPacket(
             val isControl = (byte1.toInt() and 0x01) != 0
             val packetData = data.copyOfRange(SstpProtocol.HEADER_SIZE, length)
 
-            return SstpPacket(version, isControl, length, packetData)
+            return SstpPacket(version, isControl, packetData)
         }
     }
 

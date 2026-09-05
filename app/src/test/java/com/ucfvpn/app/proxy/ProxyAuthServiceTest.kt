@@ -3,8 +3,10 @@ package com.ucfvpn.app.proxy
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -43,7 +45,7 @@ class ProxyAuthServiceTest {
     }
 
     @Test
-    fun `login makes exactly 4 HTTP requests in correct order`() = runTest {
+    fun `login makes exactly 5 HTTP requests in correct order`() = runTest {
         enqueueLoginResponses("csrf-1", "csrf-2")
 
         service.login("u", "p")
@@ -76,6 +78,40 @@ class ProxyAuthServiceTest {
         val body4 = req4.body.readUtf8()
         assertTrue(body4.contains("csrfmiddlewaretoken=csrf-2"))
         assertTrue(body4.contains("manual=Crear+una+sesion+para+este+dispositivo"))
+
+        // Request 5: GET / — confirms the session is real rather than trusting
+        // the 200 from request 4.
+        val req5 = server.takeRequest()
+        assertEquals("GET", req5.method)
+        assertEquals("/", req5.requestUrl?.encodedPath)
+    }
+
+    @Test
+    fun `login fails when the portal still shows the login page`() = runTest {
+        // Wrong credentials: Django re-renders the login form with HTTP 200, so
+        // every step "succeeds" and only the final check catches it.
+        server.enqueue(
+            MockResponse().setBody("""<input name="csrfmiddlewaretoken" value="csrf-1" />""")
+        )
+        server.enqueue(MockResponse())
+        server.enqueue(
+            MockResponse().setBody("""<input name="csrfmiddlewaretoken" value="csrf-2" />""")
+        )
+        server.enqueue(MockResponse())
+        // Session check lands back on the login page → not authenticated.
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(302)
+                .addHeader("Location", server.url("/auth/login?next=/").toString())
+        )
+        server.enqueue(
+            MockResponse().setBody("""<input name="csrfmiddlewaretoken" value="csrf-3" />""")
+        )
+
+        val result = service.login("u", "wrong-password")
+
+        assertTrue("login must fail when the portal bounces us to /auth/login", result.isFailure)
+        assertEquals(ProxyAuthState.ERROR, service.authState.value)
     }
 
     // ── CSRF extraction ──
@@ -107,6 +143,7 @@ class ProxyAuthServiceTest {
             )
         )
         server.enqueue(MockResponse())
+        server.enqueue(MockResponse()) // session verification
 
         service.login("u", "p")
 
@@ -146,6 +183,7 @@ class ProxyAuthServiceTest {
                 .setBody("""<input name="csrfmiddlewaretoken" value="csrf-2" />""")
         )
         server.enqueue(MockResponse())
+        server.enqueue(MockResponse()) // session verification
 
         service.login("u", "p")
 
@@ -162,59 +200,58 @@ class ProxyAuthServiceTest {
 
     @Test
     fun `checkAndReauth triggers re-auth when session expired`() = runTest {
-        enqueueLoginResponses("csrf-a", "csrf-b")
+        // Driven by a stateful portal rather than a fixed response queue: the
+        // exact request count varies with redirects, and a queue breaks whenever
+        // the flow changes by one call.
+        val portal = FakePortal(server)
+        server.dispatcher = portal
+
         service.login("u", "p")
         assertEquals(ProxyAuthState.AUTHENTICATED, service.authState.value)
 
-        // Session check: GET / → 302 redirect to login page
-        server.enqueue(
-            MockResponse()
-                .setResponseCode(302)
-                .addHeader("Location", server.url("/auth/login?next=/").toString())
-        )
-        // Redirect target (GET /auth/login?next=/)
-        server.enqueue(
-            MockResponse()
-                .setBody("""<input name="csrfmiddlewaretoken" value="csrf-expired-redirect" />""")
-        )
-        // performLogin step 1: GET /auth/login?next=/ → extract CSRF
-        server.enqueue(
-            MockResponse()
-                .setBody("""<input name="csrfmiddlewaretoken" value="csrf-reauth-1" />""")
-        )
-        // performLogin step 2: POST /auth/login?next=/
-        server.enqueue(MockResponse())
-        // performLogin step 3: GET / with CSRF
-        server.enqueue(
-            MockResponse()
-                .setBody("""<input name="csrfmiddlewaretoken" value="csrf-reauth-2" />""")
-        )
-        // performLogin step 4: POST /
-        server.enqueue(MockResponse())
-        server.enqueue(
-            MockResponse()
-                .setResponseCode(302)
-                .addHeader("Location", server.url("/auth/login?next=/").toString())
-        )
-        // Redirect target (GET /auth/login?next=/)
-        server.enqueue(
-            MockResponse()
-                .setBody("""<input name="csrfmiddlewaretoken" value="csrf-reauth-1" />""")
-        )
-        // Re-auth: POST /auth/login?next=/
-        server.enqueue(MockResponse())
-        // Re-auth: GET / with CSRF
-        server.enqueue(
-            MockResponse()
-                .setBody("""<input name="csrfmiddlewaretoken" value="csrf-reauth-2" />""")
-        )
-        // Re-auth: POST /
-        server.enqueue(MockResponse())
+        // The portal drops the session; checkAndReauth must notice and log in again.
+        portal.sessionValid = false
 
         val result = service.checkAndReauth()
 
         assertTrue("checkAndReauth should succeed", result)
         assertEquals(ProxyAuthState.AUTHENTICATED, service.authState.value)
+        assertTrue("a re-login must have happened", portal.loginPosts >= 2)
+    }
+
+    /**
+     * Minimal stand-in for the Django captive portal.
+     *
+     * `GET /` redirects to the login page while [sessionValid] is false, which is
+     * exactly how the real portal signals an expired session; posting the
+     * session form makes it valid again.
+     */
+    private class FakePortal(private val server: MockWebServer) : Dispatcher() {
+        var sessionValid = false
+        var loginPosts = 0
+
+        override fun dispatch(request: RecordedRequest): MockResponse {
+            val path = request.requestUrl?.encodedPath ?: "/"
+            val isLoginPath = path.startsWith("/auth/login")
+
+            return when {
+                request.method == "POST" && isLoginPath -> {
+                    loginPosts++
+                    MockResponse()
+                }
+                request.method == "POST" -> {
+                    sessionValid = true
+                    MockResponse()
+                }
+                isLoginPath -> MockResponse()
+                    .setBody("""<input name="csrfmiddlewaretoken" value="csrf-login" />""")
+                sessionValid -> MockResponse()
+                    .setBody("""<input name="csrfmiddlewaretoken" value="csrf-home" />""")
+                else -> MockResponse()
+                    .setResponseCode(302)
+                    .addHeader("Location", server.url("/auth/login?next=/").toString())
+            }
+        }
     }
 
     @Test
@@ -327,6 +364,14 @@ class ProxyAuthServiceTest {
 
     // ── Helpers ──
 
+    /**
+     * Enqueue the responses for one successful login.
+     *
+     * Five, not four: after the session POST the service re-checks the portal to
+     * confirm it is really logged in. A Django portal answers 200 with the login
+     * form when the password is wrong, so the HTTP status alone proves nothing.
+     * The final response is a plain 200 on `/`, i.e. "session is valid".
+     */
     private fun enqueueLoginResponses(csrf1: String, csrf3: String) {
         server.enqueue(
             MockResponse()
@@ -338,5 +383,6 @@ class ProxyAuthServiceTest {
                 .setBody("""<input name="csrfmiddlewaretoken" value="$csrf3" />""")
         )
         server.enqueue(MockResponse())
+        server.enqueue(MockResponse()) // step 5: session verification
     }
 }

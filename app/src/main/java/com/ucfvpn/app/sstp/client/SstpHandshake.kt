@@ -298,7 +298,7 @@ class SstpHandshake(
         val remaining = packet.length - 4
         if (remaining > 0) {
             val packetData = receiveExact(remaining)
-            return SstpPacket(packet.version, packet.isControl, packet.length, packetData)
+            return SstpPacket(packet.version, packet.isControl, packetData)
         }
 
         return packet

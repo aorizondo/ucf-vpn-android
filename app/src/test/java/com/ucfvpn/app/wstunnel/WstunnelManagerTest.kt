@@ -201,9 +201,13 @@ class WstunnelManagerTest {
     }
 
     @Test
-    fun `buildCommand element count is 15 for FIXED mode`() {
+    fun `buildCommand element count is 13 for FIXED mode`() {
         val cmd = defaultConfig.buildCommand(binaryPath)
-        assertEquals(15, cmd.size)
+        // binary, client, -L, listen, -p, proxy, url,
+        // --connection-retry-max-backoff, value, --websocket-ping-frequency,
+        // value, --log-lvl, value = 13. The previous expectation of 15
+        // contradicted the neighbouring test, which indexes --log-lvl at cmd[11].
+        assertEquals(13, cmd.size)
     }
 
     // ── buildCommand — DYNAMIC mode ───────────────────────────────

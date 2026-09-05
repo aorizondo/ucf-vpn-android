@@ -116,13 +116,41 @@ class VpnViewModel(
     val uiConfig: StateFlow<UiConfig> = _uiConfig.asStateFlow()
 
     /**
+     * Invoked when the UI asks to connect. Set by the Activity, which owns the
+     * VPN consent dialog and the service binding; it calls [connectNow] once the
+     * [com.ucfvpn.app.vpn.VpnGatewayService] is available.
+     */
+    var onConnectRequested: (() -> Unit)? = null
+
+    /**
      * Initiate VPN connection with the current configuration.
-     * Persists config to DataStore + Keystore before connecting.
+     *
+     * Delegates to the Activity first: without VPN consent and a bound service
+     * the orchestrator cannot establish a TUN interface.
      */
     fun connect() {
+        val requester = onConnectRequested
+        if (requester != null) {
+            requester()
+        } else {
+            connectNow()
+        }
+    }
+
+    /**
+     * Start the connection sequence. Only call once the VPN service is bound —
+     * [connect] is the entry point for the UI.
+     * Persists config to DataStore + Keystore before connecting.
+     */
+    fun connectNow() {
         val config = _uiConfig.value
         orchestrator.saveConfig(config)
         orchestrator.connect(config)
+    }
+
+    /** Surface an error raised outside the orchestrator (e.g. consent denied). */
+    fun reportError(message: String) {
+        viewModelScope.launch { orchestrator.notifyError(message) }
     }
 
     /** Disconnect the VPN and stop all services. */
@@ -141,12 +169,6 @@ class VpnViewModel(
         orchestrator.clearLogs()
     }
 
-    /** Append a log entry manually (for UI-initiated actions). */
-    fun appendLog(level: String, message: String) {
-        viewModelScope.launch {
-            // emitLog is private in orchestrator; skip for now
-        }
-    }
 
     override fun onCleared() {
         super.onCleared()

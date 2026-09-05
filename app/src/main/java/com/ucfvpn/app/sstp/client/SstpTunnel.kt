@@ -67,6 +67,13 @@ interface SstpTunnel {
     var onStateChanged: ((SstpState) -> Unit)?
 
     /**
+     * Callback for PPP negotiation milestones (LCP opened, auth accepted, IP
+     * assigned). Lets callers report the phase the negotiation is ACTUALLY in,
+     * instead of guessing.
+     */
+    var onPppEvent: ((com.ucfvpn.app.sstp.ppp.PppEvent) -> Unit)?
+
+    /**
      * Local IP address assigned via PPP, or null if not connected.
      */
     val localAddress: String?
