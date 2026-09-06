@@ -59,6 +59,15 @@ class SstpDataPath(
     private var tunThread: Thread? = null
     private var socksThread: Thread? = null
 
+    /**
+     * Serialises writes to the TUN.
+     *
+     * Two threads write there: the SOCKS5 reader and [onPacketFromSstp], called
+     * from the SSTP receive loop. A TUN expects one packet per write, so two
+     * interleaved writes could be delivered as one corrupt packet.
+     */
+    private val tunWriteLock = Any()
+
     /** Packets routed into the SSTP tunnel since the last [start]. */
     @Volatile
     var internalPackets: Long = 0L
@@ -132,7 +141,7 @@ class SstpDataPath(
     fun onPacketFromSstp(packet: ByteArray) {
         if (!running.get()) return
         try {
-            tunOutput?.write(packet)
+            synchronized(tunWriteLock) { tunOutput?.write(packet) }
         } catch (e: Exception) {
             if (running.get()) Timber.tag(TAG).w(e, "failed to write an SSTP packet to the TUN")
         }
@@ -140,7 +149,7 @@ class SstpDataPath(
 
     /** TUN → SSTP (internal) or → hev-socks5-tunnel (everything else). */
     private fun pumpTun() {
-        val buffer = ByteArray(mtu)
+        val buffer = ByteArray(mtu + READ_HEADROOM)
         val input = tunInput ?: return
         while (running.get()) {
             val read = try {
@@ -169,7 +178,7 @@ class SstpDataPath(
 
     /** hev-socks5-tunnel → TUN. */
     private fun pumpSocks() {
-        val buffer = ByteArray(mtu)
+        val buffer = ByteArray(mtu + READ_HEADROOM)
         val input = socksInput ?: return
         while (running.get()) {
             val read = try {
@@ -181,7 +190,7 @@ class SstpDataPath(
             if (read <= 0) break
 
             try {
-                tunOutput?.write(buffer, 0, read)
+                synchronized(tunWriteLock) { tunOutput?.write(buffer, 0, read) }
             } catch (e: Exception) {
                 if (running.get()) Timber.tag(TAG).w(e, "failed to write a SOCKS5 packet to the TUN")
             }
@@ -203,5 +212,11 @@ class SstpDataPath(
         private const val DEFAULT_MTU = 1500
 
         private const val THREAD_JOIN_TIMEOUT_MS = 2_000L
+
+        /**
+         * Slack above the MTU for read buffers. A read that does not fit is
+         * truncated silently, and a truncated IP packet is a corrupt one.
+         */
+        private const val READ_HEADROOM = 128
     }
 }
