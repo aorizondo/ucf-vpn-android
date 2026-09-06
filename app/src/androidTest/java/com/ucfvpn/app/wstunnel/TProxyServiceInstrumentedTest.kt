@@ -96,9 +96,15 @@ class TProxyServiceInstrumentedTest {
             androidx.test.core.app.ApplicationProvider.getApplicationContext()
         )
 
-        // A real descriptor with a config that cannot be read: the tunnel must
-        // report failure through Result rather than throwing, since the caller
-        // tears the VPN down on a failed Result and would otherwise crash.
+        // A real descriptor with a config that cannot be read.
+        //
+        // This test found that hev's TProxyStartService returns true for a
+        // nonexistent path: the library never reports the problem, so a bad
+        // config would have produced a tunnel that looked healthy and carried
+        // nothing. Tun2SocksManager therefore checks the file itself, and this
+        // asserts that check — plus that the failure arrives through Result
+        // rather than as a throw, since the caller tears the VPN down on a
+        // failed Result and would otherwise crash.
         val ours = java.io.FileDescriptor()
         val theirs = java.io.FileDescriptor()
         android.system.Os.socketpair(

@@ -76,6 +76,18 @@ class Tun2SocksManager(private val context: Context) {
 
             val config = configPath ?: generateDynamicConfig()
 
+            // Validate the config ourselves: TProxyStartService returns true for
+            // a path that does not exist (measured on the CI emulator by
+            // TProxyServiceInstrumentedTest), so the library would report a
+            // healthy tunnel that cannot actually carry traffic.
+            val configFile = java.io.File(config)
+            if (!configFile.isFile || !configFile.canRead()) {
+                val msg = "hev-socks5-tunnel config is not readable: $config"
+                Log.e(TAG, msg)
+                _state.value = Tun2SocksState.ERROR
+                return@withContext Result.failure(java.io.FileNotFoundException(msg))
+            }
+
             if (tunFd.fd == -1) {
                 val msg = "Invalid tunnel file descriptor"
                 Log.e(TAG, msg)
