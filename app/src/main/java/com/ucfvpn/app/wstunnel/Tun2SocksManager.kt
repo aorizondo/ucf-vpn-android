@@ -4,43 +4,33 @@ import android.content.Context
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
-import timber.log.Timber
-import java.io.File
-import java.io.InputStream
-import kotlin.concurrent.thread
 
 /**
- * Manages the lifecycle of the hev-socks5-tunnel binary as a subprocess on
- * Android.
+ * Runs hev-socks5-tunnel, which turns IP packets into SOCKS5 traffic.
  *
- * This is used in Phase 2 (socks5+VPN testing) to route all device
- * traffic through a local SOCKS5 proxy (wstunnel) without WireGuard.
+ * ## Why this is not a subprocess
+ * It used to be launched with [ProcessBuilder], passing the TUN descriptor's
+ * number on the command line (`-f <fd>`). That could never have worked: Android
+ * closes descriptors above stderr on exec, so the number pointed at nothing in
+ * the child — measured on the CI emulator by
+ * `FdInheritanceInstrumentedTest`. No packet could have crossed the tunnel
+ * however correct the rest of the code was, and nothing revealed it because the
+ * code had never run.
  *
- * ## Binary management
- * The executable ships as `jniLibs/<abi>/libhev_socks5_tunnel.so` and is run
- * straight from [android.content.pm.ApplicationInfo.nativeLibraryDir]. It is
- * NOT copied to `filesDir`: since Android 10, an app with `targetSdk >= 29` is
- * denied by SELinux from exec()ing anything inside its own writable data
- * directory. The installer also picks the right ABI.
+ * The library therefore runs in-process through the JNI layer that
+ * hev-socks5-tunnel itself ships ([TProxyService]), where the descriptor is
+ * simply valid.
  *
- * ## Config file
- * The YAML config is generated dynamically via
- * [HevSocks5TunnelConfigGenerator] (Fase 4) and written to
- * `context.filesDir/hev_socks5_tunnel_dynamic.yaml`, replacing the static
- * asset `assets/hev_socks5_tunnel.yaml`. A custom config path can still be
- * passed to [start] to override the generated config.
- *
- * ## Process lifecycle
- * - [start] extracts the binary, generates the config, launches the process with the TUN fd
- * - [stop] sends SIGTERM and waits up to 3 s before SIGKILL
+ * ## What it is given
+ * Not the real TUN: one end of a socket pair, so [com.ucfvpn.app.sstp.data.SstpDataPath]
+ * can keep the traffic bound for the UCF internal networks out of the proxy.
  *
  * ## State
- * The current lifecycle state is exposed as a [StateFlow] of [Tun2SocksState].
+ * Exposed as a [StateFlow] of [Tun2SocksState].
  */
 class Tun2SocksManager(private val context: Context) {
 
@@ -50,33 +40,20 @@ class Tun2SocksManager(private val context: Context) {
     private val _state = MutableStateFlow(Tun2SocksState.STOPPED)
     val state: StateFlow<Tun2SocksState> = _state.asStateFlow()
 
-    /** Last N lines of combined stdout + stderr output for UI display. */
-    private val _logBuffer = ArrayDeque<String>(MAX_LOG_LINES)
-    val logBuffer: List<String> get() = _logBuffer.toList()
-
     // ── Private fields ────────────────────────────────────────────
 
-    private var process: Process? = null
-    private var stdoutThread: Thread? = null
-    private var stderrThread: Thread? = null
-
-    /**
-     * Absolute path of the hev-socks5-tunnel executable.
-     *
-     * Ships as `jniLibs/<abi>/libhev_socks5_tunnel.so`; see [resolveBinary] for
-     * why it is not extracted to `filesDir`.
-     */
-    private val binaryPath: File
-        get() = File(context.applicationInfo.nativeLibraryDir, BINARY_NAME)
+    /** Set once the native library has been loaded successfully. */
+    private var libraryLoaded = false
 
     // ── Start ─────────────────────────────────────────────────────
 
     /**
-     * Extract binary + config and launch hev-socks5-tunnel with the TUN fd.
+     * Load the library if needed and start the tunnel on [tunFd].
      *
-     * @param tunFd The ParcelFileDescriptor for the TUN interface
-     * @param configPath Optional custom config path (defaults to the dynamically generated config)
-     * @return [Result.success] when the process has started, or [Result.failure] with the cause
+     * @param tunFd descriptor carrying raw IP packets — in the split-tunnel path
+     *   this is our end of the socket pair, not the TUN itself
+     * @param configPath optional config path; defaults to the generated YAML
+     * @return [Result.success] once the tunnel reports itself running
      */
     suspend fun start(
         tunFd: ParcelFileDescriptor,
@@ -90,44 +67,40 @@ class Tun2SocksManager(private val context: Context) {
 
             _state.value = Tun2SocksState.STARTING
 
-            val binary = resolveBinary()
+            if (!libraryLoaded) {
+                // Fails when no build exists for this ABI, or when the JNI layer
+                // could not bind its natives to TProxyService.
+                TProxyService.load()
+                libraryLoaded = true
+            }
+
             val config = configPath ?: generateDynamicConfig()
 
-            // Validate TUN fd
             if (tunFd.fd == -1) {
-                val msg = "Invalid TUN file descriptor"
+                val msg = "Invalid tunnel file descriptor"
                 Log.e(TAG, msg)
                 _state.value = Tun2SocksState.ERROR
                 return@withContext Result.failure(IllegalArgumentException(msg))
             }
 
-            val cmd = listOf(
-                binary.absolutePath,
-                "-c", config,
-                "-f", tunFd.fd.toString()
-            )
-            Log.i(TAG, "Launching: ${cmd.joinToString(" ")}")
+            Log.i(TAG, "Starting hev-socks5-tunnel (config=$config fd=${tunFd.fd})")
 
-            val pb = ProcessBuilder(cmd)
-                .directory(context.filesDir)
-                .redirectErrorStream(false)
-
-            val started = pb.start()
-            process = started
-
-            // Start log-capture threads before the liveness check, so a crash
-            // banner on stderr still reaches Logcat.
-            stdoutThread = captureOutput(started.inputStream, "$TAG/stdout")
-            stderrThread = captureOutput(started.errorStream, "$TAG/stderr")
-
-            // A launch failure (wrong ABI, unreadable config, SELinux denial on
-            // exec) shows up as an immediate exit, not as an exception from
-            // start(). Give the process a moment and confirm it is still alive
-            // before reporting success.
-            delay(LAUNCH_SETTLE_MS)
-            if (!started.isAlive) {
-                val msg = "hev-socks5-tunnel exited immediately (code ${started.exitValue()})"
+            // Returns as soon as its worker thread is up; the tunnel keeps
+            // running until TProxyStopService().
+            if (!TProxyService.TProxyStartService(config, tunFd.fd)) {
+                val msg = "hev-socks5-tunnel refused to start"
                 Log.e(TAG, msg)
+                _state.value = Tun2SocksState.ERROR
+                return@withContext Result.failure(IllegalStateException(msg))
+            }
+
+            // Ask the library rather than assuming: the previous implementation
+            // reported RUNNING unconditionally, which made the caller's liveness
+            // check tautological.
+            if (!TProxyService.TProxyIsRunning()) {
+                val msg = "hev-socks5-tunnel stopped immediately after starting"
+                Log.e(TAG, msg)
+                TProxyService.TProxyStopService()
                 _state.value = Tun2SocksState.ERROR
                 return@withContext Result.failure(IllegalStateException(msg))
             }
@@ -135,6 +108,12 @@ class Tun2SocksManager(private val context: Context) {
             _state.value = Tun2SocksState.RUNNING
             Log.i(TAG, "hev-socks5-tunnel started")
             Result.success(Unit)
+        } catch (e: UnsatisfiedLinkError) {
+            // Not an Exception, so it would otherwise escape the catch below and
+            // crash the caller instead of failing the connection.
+            Log.e(TAG, "hev-socks5-tunnel native library unavailable", e)
+            _state.value = Tun2SocksState.ERROR
+            Result.failure(IllegalStateException("hev-socks5-tunnel library not available for this ABI", e))
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start hev-socks5-tunnel", e)
             _state.value = Tun2SocksState.ERROR
@@ -144,133 +123,54 @@ class Tun2SocksManager(private val context: Context) {
 
     // ── Stop ──────────────────────────────────────────────────────
 
-    /**
-     * Gracefully terminate the hev-socks5-tunnel subprocess.
-     *
-     * Sends SIGTERM via [Process.destroy]. If the process is still alive
-     * after 3 s, [Process.destroyForcibly] sends SIGKILL.
-     */
+    /** Stop the tunnel and wait for its worker thread to finish. */
     suspend fun stop() = withContext(Dispatchers.IO) {
-        val p = process ?: run {
-            Log.w(TAG, "stop() called but no process is running")
+        if (!libraryLoaded) {
             _state.value = Tun2SocksState.STOPPED
             return@withContext
         }
 
         _state.value = Tun2SocksState.STOPPING
-        Log.i(TAG, "Sending SIGTERM to hev-socks5-tunnel")
-        p.destroy()
-
-        // Wait up to 3 s for graceful exit
-        if (!p.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) {
-            Log.w(TAG, "hev-socks5-tunnel did not exit — sending SIGKILL")
-            p.destroyForcibly()
+        try {
+            TProxyService.TProxyStopService()
+        } catch (e: Throwable) {
+            Log.w(TAG, "Error stopping hev-socks5-tunnel", e)
         }
-
-        // Join log threads
-        stdoutThread?.join(2_000)
-        stderrThread?.join(2_000)
-
-        process = null
-        stdoutThread = null
-        stderrThread = null
-
         _state.value = Tun2SocksState.STOPPED
         Log.i(TAG, "hev-socks5-tunnel stopped")
     }
 
     // ── Query ─────────────────────────────────────────────────────
 
-    /** Convenience check: is the process currently alive? */
-    fun isRunning(): Boolean = process?.isAlive == true
-
-    // ── Binary extraction ─────────────────────────────────────────
-
-    /**
-     * Locate the hev-socks5-tunnel executable in the native library directory.
-     *
-     * Nothing is extracted or chmod'ed: since Android 10, an app with
-     * `targetSdk >= 29` is denied by SELinux from exec()ing anything inside its
-     * own writable data directory, so the previous copy-to-filesDir approach
-     * could not work regardless of whether the file was present.
-     *
-     * @throws IllegalStateException if the binary is missing for this ABI
-     */
-    private fun resolveBinary(): File {
-        val binary = binaryPath
-        if (!binary.exists()) {
-            throw IllegalStateException(
-                "hev-socks5-tunnel binary not found at ${binary.absolutePath} — " +
-                    "no build for this device ABI (${android.os.Build.SUPPORTED_ABIS.joinToString()})"
-            )
-        }
-        return binary
+    /** Whether the tunnel's worker thread is alive, as reported by the library. */
+    fun isRunning(): Boolean = try {
+        libraryLoaded && TProxyService.TProxyIsRunning()
+    } catch (e: Throwable) {
+        false
     }
 
     /**
-     * Generate the dynamic YAML config via [HevSocks5TunnelConfigGenerator]
-     * (Fase 4) instead of extracting the static asset.
-     *
-     * Defaults point at the wstunnel SOCKS5 listener (127.0.0.1:1080) with
-     * DNS over SOCKS5 enabled (`dns.tcp: true`).
-     *
-     * @return the absolute path of the generated config file
-     * @throws IllegalStateException if generation fails
+     * Traffic counters from the library, or null if it is not running.
+     * Shape is defined by hev-socks5-tunnel.
      */
-    private fun generateDynamicConfig(): String {
-        val result = HevSocks5TunnelConfigGenerator.generate(context)
-        if (result.isFailure) {
-            throw result.exceptionOrNull()
-                ?: IllegalStateException("Failed to generate dynamic hev-socks5-tunnel config")
-        }
-        return result.getOrThrow()
+    fun stats(): LongArray? = try {
+        if (libraryLoaded && TProxyService.TProxyIsRunning()) TProxyService.TProxyGetStats() else null
+    } catch (e: Throwable) {
+        null
     }
 
-    // ── Log capture ───────────────────────────────────────────────
+    // ── Config ────────────────────────────────────────────────────
 
-    private fun captureOutput(stream: InputStream, tag: String): Thread {
-        return thread(name = tag, isDaemon = true) {
-            try {
-                stream.bufferedReader().use { reader ->
-                    var line = reader.readLine()
-                    while (line != null) {
-                        when {
-                            ERROR_PATTERN.matches(line) -> Log.e(tag, line)
-                            else -> Log.i(tag, line)
-                        }
-                        synchronized(_logBuffer) {
-                            if (_logBuffer.size >= MAX_LOG_LINES) {
-                                _logBuffer.removeFirst()
-                            }
-                            _logBuffer.addLast(line)
-                        }
-                        line = reader.readLine()
-                    }
-                }
-            } catch (e: Exception) {
-                Log.d(tag, "Log capture thread exiting: ${e.message}")
-            }
-        }
-    }
+    /**
+     * Generate the YAML config via [HevSocks5TunnelConfigGenerator], pointed at
+     * the local wstunnel SOCKS5 listener with DNS resolved over it.
+     *
+     * @return absolute path of the generated file
+     */
+    private fun generateDynamicConfig(): String =
+        HevSocks5TunnelConfigGenerator.generate(context).getOrThrow()
 
     companion object {
         private const val TAG = "tun2socks"
-        private const val MAX_LOG_LINES = 200
-
-        /** File name under `jniLibs/<abi>/`; must keep the `lib*.so` shape to be installed. */
-        private const val BINARY_NAME = "libhev_socks5_tunnel.so"
-
-        /** Grace period before checking that the freshly launched process survived. */
-        private const val LAUNCH_SETTLE_MS = 300L
-
-        /** Regex matching lines that should be logged at ERROR level. */
-        private val ERROR_PATTERN = Regex(
-            "(?i)(error|failed|panic|fatal|refused|timeout)"
-        )
     }
-}
-
-/** Lifecycle states for the Tun2SocksManager. */
-enum class Tun2SocksState {
-    STOPPED, STARTING, RUNNING, STOPPING, ERROR
 }

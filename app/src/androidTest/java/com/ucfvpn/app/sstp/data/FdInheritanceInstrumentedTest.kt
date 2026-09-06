@@ -10,28 +10,32 @@ import org.junit.runner.RunWith
 import java.io.FileDescriptor
 
 /**
- * Answers one question the whole tun2socks design rests on: **does a process
- * started with [ProcessBuilder] inherit a file descriptor from its parent?**
+ * Records a platform fact the whole tun2socks design used to rest on: **a
+ * process started with [ProcessBuilder] does NOT inherit its parent's file
+ * descriptors.**
  *
- * Both `Tun2SocksManager` and the split-tunnel data path hand a descriptor
- * number to hev-socks5-tunnel on its command line (`-f <fd>`) and assume the
- * subprocess can use it. If Android's `ProcessBuilder` closes descriptors above
- * stderr on exec — as OpenJDK's `childProcess()` does via `closeDescriptors()` —
- * that number would point at nothing in the child and the tunnel could never
- * carry a packet, no matter how correct the rest of the code is.
+ * Measured on the CI emulator (API 29) on 2026-09-06: the child reported `NO`.
+ * Android's `ProcessBuilder` closes descriptors above stderr on exec, the same
+ * way OpenJDK's `childProcess()` does via `closeDescriptors()`.
  *
- * This cannot be settled by reading our own source, and it decides whether the
- * subprocess approach is viable at all or the JNI library that
- * hev-socks5-tunnel's `Android.mk` also builds is required instead.
+ * That invalidated the original `Tun2SocksManager`: it handed hev-socks5-tunnel
+ * a descriptor number on its command line (`-f <fd>`) and assumed the subprocess
+ * could use it. The number pointed at nothing in the child, so the tunnel could
+ * never have carried a single packet however correct the rest of the code was —
+ * and nothing revealed it, because the code had never run. hev-socks5-tunnel is
+ * therefore driven through its JNI library, which runs in this process and needs
+ * no inheritance at all.
  *
- * The check is deliberately independent of hev: it spawns `/system/bin/sh` and
- * asks it whether the descriptor exists in its own `/proc/self/fd`.
+ * The test is kept as a regression guard: were Android ever to start passing
+ * descriptors through, it would fail and invite a simpler design. It is
+ * deliberately independent of hev — it spawns `/system/bin/sh` and asks it
+ * whether the descriptor exists in its own `/proc/self/fd`.
  */
 @RunWith(AndroidJUnit4::class)
 class FdInheritanceInstrumentedTest {
 
     @Test
-    fun subprocessInheritsAnExplicitlyPassedFileDescriptor() {
+    fun subprocessDoesNotInheritFileDescriptors() {
         val ours = FileDescriptor()
         val theirs = FileDescriptor()
         Os.socketpair(OsConstants.AF_UNIX, OsConstants.SOCK_SEQPACKET, 0, ours, theirs)
@@ -53,11 +57,11 @@ class FdInheritanceInstrumentedTest {
             process.waitFor()
 
             assertTrue(
-                "A subprocess did NOT inherit fd $fd (reported: '$output'). " +
-                    "Passing a descriptor number on the command line cannot work, so " +
-                    "hev-socks5-tunnel must be driven through its JNI library instead " +
-                    "of as a subprocess.",
-                output.contains("YES")
+                "A subprocess unexpectedly INHERITED fd $fd (reported: '$output'). " +
+                    "Android used to close descriptors on exec, which is why " +
+                    "hev-socks5-tunnel is driven through JNI. If this now holds, the " +
+                    "simpler subprocess approach is available again.",
+                output.contains("NO")
             )
         } finally {
             wrappedOurs.close()
