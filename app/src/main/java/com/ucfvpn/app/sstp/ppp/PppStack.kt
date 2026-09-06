@@ -16,6 +16,9 @@ import java.nio.ByteOrder
 object PppConstants {
 
     // PPP protocol field values
+    /** Raw IPv4 payload (RFC 1332). Unlike LCP/PAP/IPCP this is not a control frame. */
+    const val PROTOCOL_IP = 0x0021
+
     const val PROTOCOL_LCP = 0xC021
     const val PROTOCOL_PAP = 0xC023
     const val PROTOCOL_IPCP = 0x8021
@@ -146,6 +149,20 @@ fun buildPppFrame(protocol: Int, code: Int, id: Int, data: ByteArray): ByteArray
     buf.put(id.toByte())
     buf.putShort(length.toShort())
     buf.put(data)
+    return buf.array()
+}
+
+/**
+ * Build a PPP data frame: `[protocol(2)][payload...]`.
+ *
+ * Data frames (protocol 0x0021) carry a raw IP packet and have none of the
+ * Code/Identifier/Length fields a control frame does, so they cannot go through
+ * the four-argument [buildPppFrame].
+ */
+fun buildPppFrame(protocol: Int, payload: ByteArray): ByteArray {
+    val buf = ByteBuffer.allocate(2 + payload.size).order(ByteOrder.BIG_ENDIAN)
+    buf.putShort(protocol.toShort())
+    buf.put(payload)
     return buf.array()
 }
 
@@ -303,6 +320,12 @@ class PppStack(
     /** Observability callback for negotiation milestones. */
     var onEvent: ((PppEvent) -> Unit)? = null
 
+    /**
+     * Receives raw IPv4 packets arriving from the peer (PPP protocol 0x0021),
+     * i.e. the tunnel's actual payload. Wired to the data path by the caller.
+     */
+    var onIpPacket: ((ByteArray) -> Unit)? = null
+
     private var lcpHandler: LcpHandler? = null
     private var papHandler: PapHandler? = null
     private var ipcpHandler: IpCpHandler? = null
@@ -377,6 +400,16 @@ class PppStack(
      * Feed a raw PPP frame received from the SSTP tunnel.
      */
     fun handleFrame(frame: ByteArray) {
+        // Data frames must be split off BEFORE parsing: an IP packet has no
+        // Code/Identifier/Length, so parsePppFrame would read its IP header as
+        // control fields and either drop it or mangle it. These used to fall
+        // into the `else` branch below and be discarded, which is why no
+        // tunnelled traffic ever reached the device.
+        if (readPppProtocol(frame) == PppConstants.PROTOCOL_IP) {
+            onIpPacket?.invoke(stripPppProtocol(frame))
+            return
+        }
+
         val ppp = parsePppFrame(frame) ?: return
         when (ppp.protocol) {
             PppConstants.PROTOCOL_LCP -> lcpHandler?.handleFrame(ppp)
@@ -401,4 +434,28 @@ class PppStack(
         papHandler = null
         ipcpHandler = null
     }
+}
+/**
+ * Read the 2-byte PPP protocol field, tolerating an HDLC address/control
+ * prefix (FF 03), or null when the frame is too short.
+ */
+internal fun readPppProtocol(frame: ByteArray): Int? {
+    val offset = pppPayloadOffset(frame) ?: return null
+    return readShort(frame, offset)
+}
+
+/**
+ * Strip the protocol field (and any HDLC prefix) to yield the raw payload of a
+ * PPP data frame.
+ */
+internal fun stripPppProtocol(frame: ByteArray): ByteArray {
+    val offset = pppPayloadOffset(frame) ?: return ByteArray(0)
+    return frame.copyOfRange(offset + 2, frame.size)
+}
+
+/** Offset of the protocol field, skipping an optional FF 03 HDLC prefix. */
+private fun pppPayloadOffset(frame: ByteArray): Int? {
+    if (frame.size < 2) return null
+    if (frame.size >= 4 && frame[0] == 0xFF.toByte() && frame[1] == 0x03.toByte()) return 2
+    return 0
 }

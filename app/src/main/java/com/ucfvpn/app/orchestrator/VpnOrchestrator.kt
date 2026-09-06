@@ -597,6 +597,15 @@ class VpnOrchestrator(
             val vpnService = vpnService
                 ?: throw IllegalStateException("VpnGatewayService not available")
 
+            // Wire the data path in BOTH directions before the tunnel starts.
+            // Outbound: internal packets leave through the SSTP tunnel.
+            // Inbound: packets arriving from SSTP are written back to the TUN.
+            // Without this the private routes are decorative and every packet
+            // ends up in the SOCKS5 proxy, which is what kept the internal UCF
+            // sites unreachable while the VPN was up.
+            vpnService.sendToSstp = { frame -> sstpTunnel.send(frame) }
+            sstpTunnel.onIpPacket = { packet -> vpnService.onPacketFromSstp(packet) }
+
             val vpnResult = vpnService.startWithSplitTunnelSocks5(
                 privateNetworks = appConfig.splitTunnelConfig.privateNetworks,
                 socks5Proxy = "127.0.0.1:$WSTUNNEL_SOCKS5_PORT",
@@ -834,6 +843,10 @@ class VpnOrchestrator(
     private suspend fun cleanupVpnService() {
         try {
             emitLog("INFO", "VPN: Shutting down service...")
+            // Drop the data-path wiring first so no packet is routed into a
+            // tunnel that is being torn down.
+            sstpTunnel.onIpPacket = null
+            vpnService?.sendToSstp = null
             vpnService?.shutdown()
             emitLog("INFO", "VPN: Shutdown complete")
         } catch (e: Exception) {

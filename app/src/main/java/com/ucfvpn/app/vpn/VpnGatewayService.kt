@@ -7,6 +7,8 @@ import android.net.VpnService
 import android.os.Binder
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import com.ucfvpn.app.sstp.data.SplitRouter
+import com.ucfvpn.app.sstp.data.SstpDataPath
 import com.ucfvpn.app.wg.WireGuardConfig
 import com.ucfvpn.app.wstunnel.HevSocks5TunnelConfigGenerator
 import com.ucfvpn.app.wstunnel.Tun2SocksManager
@@ -365,6 +367,19 @@ class VpnGatewayService : VpnService() {
 
     private var tun2SocksManager: Tun2SocksManager? = null
 
+    /** Demultiplexer between the TUN, the SSTP tunnel and the SOCKS5 path. */
+    private var dataPath: SstpDataPath? = null
+
+    /** Our end of the socket pair that stands in for hev-socks5-tunnel's TUN. */
+    private var socks5OurSide: ParcelFileDescriptor? = null
+
+    /**
+     * Delivers a raw PPP frame to the SSTP tunnel. Set by the orchestrator once
+     * the tunnel is up; without it internal traffic has nowhere to go, so the
+     * split tunnel refuses to start.
+     */
+    var sendToSstp: ((ByteArray) -> Unit)? = null
+
     /**
      * Starts the VPN tunnel with hev-socks5-tunnel (Phase 2: socks5+VPN).
      *
@@ -491,9 +506,30 @@ class VpnGatewayService : VpnService() {
 
         Timber.tag(TAG).d("Split TUN established, starting hev-socks5-tunnel with $yamlPath...")
 
-        // 3. Start hev-socks5-tunnel with the TUN fd and dynamic config
-        val startResult = manager.start(tunFd, yamlPath)
+        // 3. Build the socket pair that stands in for the TUN on the SOCKS5 side.
+        //
+        // hev-socks5-tunnel cannot be handed the real TUN descriptor: it would
+        // then receive EVERY packet, including the traffic bound for the UCF
+        // internal networks, which is exactly what the split has to keep out of
+        // the proxy. It gets one end of an AF_UNIX/SOCK_SEQPACKET pair instead —
+        // it reads and writes raw IP packets there just as it would on a TUN,
+        // and SEQPACKET preserves the packet boundaries a datagram device needs.
+        // SstpDataPath owns the demultiplexing between the two.
+        val socketPair = try {
+            createSocks5SocketPair()
+        } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "Failed to create the SOCKS5 socket pair")
+            tunFd.close()
+            tunInterface = null
+            return Result.failure(e)
+        }
+        val (ourSide, hevSide) = socketPair
+
+        // 4. Start hev-socks5-tunnel against its end of the pair
+        val startResult = manager.start(hevSide, yamlPath)
         if (startResult.isFailure) {
+            closeQuietly(ourSide)
+            closeQuietly(hevSide)
             tunFd.close()
             tunInterface = null
             return startResult
@@ -511,10 +547,52 @@ class VpnGatewayService : VpnService() {
             // Leaving the TUN up here would blackhole ALL device traffic: the
             // interface holds the default route with nothing serving it.
             manager.stop()
+            closeQuietly(ourSide)
+            closeQuietly(hevSide)
             tunFd.close()
             tunInterface = null
             return Result.failure(Exception(msg))
         }
+
+        // 5. Start the demultiplexer: internal networks to SSTP, the rest to
+        // hev-socks5-tunnel. Without this the private routes are decorative.
+        val sender = sendToSstp
+        if (sender == null) {
+            val msg = "No SSTP sender wired: cannot route internal traffic"
+            Timber.tag(TAG).e(msg)
+            manager.stop()
+            closeQuietly(ourSide)
+            closeQuietly(hevSide)
+            tunFd.close()
+            tunInterface = null
+            return Result.failure(IllegalStateException(msg))
+        }
+
+        val path = try {
+            SstpDataPath(
+                tunFd = tunFd,
+                socks5Side = ourSide,
+                router = SplitRouter(privateNetworks),
+                sendToSstp = sender,
+                mtu = vpnConfig.mtu
+            ).also { it.start() }
+        } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "Failed to start the data path")
+            manager.stop()
+            closeQuietly(ourSide)
+            closeQuietly(hevSide)
+            tunFd.close()
+            tunInterface = null
+            return Result.failure(e)
+        }
+
+        // The subprocess inherited its end when it forked, so this copy has to go:
+        // as long as the parent holds it open, a read on our end can never see
+        // EOF, not even when hev-socks5-tunnel dies.
+        closeQuietly(hevSide)
+
+        dataPath = path
+        socks5OurSide = ourSide
 
         Timber.tag(TAG).d(
             "Split tunnel started: private=$privateNetworks socks5=$socks5Proxy dnsViaSocks5=$dnsViaSocks5"
@@ -523,9 +601,73 @@ class VpnGatewayService : VpnService() {
     }
 
     /**
+     * Feed an IPv4 packet received through the SSTP tunnel into the TUN, so the
+     * app that opened the connection sees the reply. Wired by the orchestrator
+     * to `SstpTunnel.onIpPacket`.
+     */
+    fun onPacketFromSstp(packet: ByteArray) {
+        dataPath?.onPacketFromSstp(packet)
+    }
+
+    /**
+     * Create the AF_UNIX socket pair used in place of a TUN for
+     * hev-socks5-tunnel.
+     *
+     * @return our end first, the subprocess's end second
+     */
+    private fun createSocks5SocketPair(): Pair<ParcelFileDescriptor, ParcelFileDescriptor> {
+        val ours = java.io.FileDescriptor()
+        val theirs = java.io.FileDescriptor()
+        // SOCK_SEQPACKET keeps message boundaries, so one read yields exactly one
+        // IP packet, matching how a TUN behaves.
+        android.system.Os.socketpair(
+            android.system.OsConstants.AF_UNIX,
+            android.system.OsConstants.SOCK_SEQPACKET,
+            0,
+            ours,
+            theirs
+        )
+        // dup() takes a copy, so the descriptors Os.socketpair() opened have to
+        // be closed here or every connection attempt leaks two of them.
+        val wrappedOurs = ParcelFileDescriptor.dup(ours)
+        val wrappedTheirs = try {
+            ParcelFileDescriptor.dup(theirs)
+        } catch (e: Exception) {
+            closeQuietly(wrappedOurs)
+            throw e
+        } finally {
+            closeRawQuietly(ours)
+            closeRawQuietly(theirs)
+        }
+        return wrappedOurs to wrappedTheirs
+    }
+
+    private fun closeRawQuietly(fd: java.io.FileDescriptor) {
+        try {
+            android.system.Os.close(fd)
+        } catch (e: Exception) {
+            Timber.tag(TAG).d(e, "ignored error while closing a raw descriptor")
+        }
+    }
+
+    private fun closeQuietly(fd: ParcelFileDescriptor?) {
+        try {
+            fd?.close()
+        } catch (e: Exception) {
+            Timber.tag(TAG).d(e, "ignored error while closing a descriptor")
+        }
+    }
+
+    /**
      * Shuts down the tun2socks component cleanly.
      */
     private suspend fun shutdownTun2Socks() {
+        // Stop the demultiplexer before the process it feeds.
+        dataPath?.stop()
+        dataPath = null
+        closeQuietly(socks5OurSide)
+        socks5OurSide = null
+
         tun2SocksManager?.let { manager ->
             try {
                 manager.stop()

@@ -74,6 +74,12 @@ interface SstpTunnel {
     var onPppEvent: ((com.ucfvpn.app.sstp.ppp.PppEvent) -> Unit)?
 
     /**
+     * Receives raw IPv4 packets arriving through the tunnel (PPP protocol
+     * 0x0021) — the tunnel's actual payload, as opposed to its negotiation.
+     */
+    var onIpPacket: ((ByteArray) -> Unit)?
+
+    /**
      * Local IP address assigned via PPP, or null if not connected.
      */
     val localAddress: String?

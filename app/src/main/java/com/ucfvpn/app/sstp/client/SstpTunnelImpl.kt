@@ -75,6 +75,7 @@ class SstpTunnelImpl(
     override var onPppFrameReceived: ((ByteArray) -> Unit)? = null
     override var onStateChanged: ((SstpState) -> Unit)? = null
     override var onPppEvent: ((PppEvent) -> Unit)? = null
+    override var onIpPacket: ((ByteArray) -> Unit)? = null
 
     override var localAddress: String? = null
         private set
@@ -168,6 +169,9 @@ class SstpTunnelImpl(
                 // Forward real negotiation milestones so callers can report the
                 // phase the link is actually in.
                 onEvent = { event -> onPppEvent?.invoke(event) }
+                // Tunnelled IPv4 payload, handed to the data path so it reaches
+                // the TUN instead of being dropped.
+                onIpPacket = { packet -> this@SstpTunnelImpl.onIpPacket?.invoke(packet) }
             }
             pppStack = stack
 

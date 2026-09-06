@@ -245,6 +245,7 @@ class VpnOrchestratorTest {
         override var onPppFrameReceived: ((ByteArray) -> Unit)? = null
         override var onStateChanged: ((SstpState) -> Unit)? = null
         override var onPppEvent: ((PppEvent) -> Unit)? = null
+        override var onIpPacket: ((ByteArray) -> Unit)? = null
 
         override var localAddress: String? = null
             private set
