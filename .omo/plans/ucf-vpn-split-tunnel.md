@@ -645,9 +645,14 @@ implementa por tanto el data path, con una variante más simple que la B1 origin
 - PPP: los frames 0x0021 se separan **antes** de parsear (un paquete IP no tiene
   Code/Id/Length, así que `parsePppFrame` los habría parseado mal).
 
-**Riesgo abierto**: que hev-socks5-tunnel acepte un socketpair donde espera un TUN
-sólo puede confirmarse en dispositivo (Fase 7). Si no lo aceptara, la alternativa
-es la integración JNI usando el módulo de librería que ya define su `Android.mk`.
+**Resuelto el mismo día**: el CI midió que un subproceso NO hereda descriptores
+(el hijo reportó `NO`), lo que invalidaba el diseño original —a hev se le pasaba
+un `-f <fd>` que en el hijo no apuntaba a nada—. hev ya trae capa JNI, así que se
+usa la librería en proceso: `TProxyService.kt` + el módulo compartido compilado
+con `PKGNAME`/`CLSNAME`. El socketpair sobrevive. Verificado por CI.
+
+**Queda por verificar en dispositivo**: que hev acepte un socketpair donde espera
+un TUN. El binding, la carga y el arranque ya los cubre el CI.
 
 **Pendiente**: retirada de WireGuard del árbol, recuperar los tests de
 `app/test-broken/` (`VpnOrchestratorTest.kt` 20 KB, `VpnIntegrationTest.kt` 27 KB),
