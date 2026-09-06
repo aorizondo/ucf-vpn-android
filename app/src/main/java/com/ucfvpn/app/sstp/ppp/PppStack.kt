@@ -153,7 +153,7 @@ fun buildPppFrame(protocol: Int, code: Int, id: Int, data: ByteArray): ByteArray
 }
 
 /**
- * Build a PPP data frame: `[protocol(2)][payload...]`.
+ * Build a PPP data frame: a 2-byte protocol field followed by the payload.
  *
  * Data frames (protocol 0x0021) carry a raw IP packet and have none of the
  * Code/Identifier/Length fields a control frame does, so they cannot go through
