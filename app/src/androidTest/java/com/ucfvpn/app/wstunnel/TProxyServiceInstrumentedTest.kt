@@ -16,34 +16,74 @@ import org.junit.runner.RunWith
  * renamed package or method would only surface as an `UnsatisfiedLinkError` the
  * first time someone pressed Connect on a real phone.
  *
- * The CI emulator is x86_64 and no build is packaged for it, so the library is
- * genuinely absent there. That is a legitimate outcome and is asserted as such;
- * the real value is the branch that runs on a packaged ABI, where a mismatch
- * fails here instead of on a device.
+ * The CI builds x86_64 alongside the phone ABIs precisely so these checks run on
+ * the emulator. Skipping them when the library is absent would have made the
+ * suite green while proving nothing, so absence is treated as a failure on any
+ * ABI we ship — which is every ABI the CI produces.
  */
 @RunWith(AndroidJUnit4::class)
 class TProxyServiceInstrumentedTest {
 
-    private fun libraryAvailable(): Boolean = try {
-        TProxyService.load()
-        true
-    } catch (e: UnsatisfiedLinkError) {
-        false
+    /**
+     * Load the library, failing the test if it is absent.
+     *
+     * Every ABI the CI packages must carry it; a missing one means the build
+     * dropped an architecture, which is exactly the kind of gap that used to
+     * surface only on someone's phone.
+     */
+    private fun loadOrFail() {
+        try {
+            TProxyService.load()
+        } catch (e: UnsatisfiedLinkError) {
+            throw AssertionError(
+                "libhev-socks5-tunnel.so is missing for ABI " +
+                    "${android.os.Build.SUPPORTED_ABIS.firstOrNull()}. Either the CI did " +
+                    "not package this architecture, or JNI_OnLoad failed to bind its " +
+                    "natives to TProxyService — check PKGNAME/CLSNAME in the workflow.",
+                e
+            )
+        }
     }
 
     @Test
-    fun nativeMethodsAreBoundWhenTheLibraryIsPackaged() {
-        if (!libraryAvailable()) return // ABI not packaged; see the class KDoc
+    fun nativeMethodsAreBoundToThisClass() {
+        loadOrFail()
 
-        // Reaching the native method at all proves JNI_OnLoad found this class
-        // and registered against it. Calling it before starting must simply say
-        // "not running" rather than throw.
-        assertFalse("a tunnel that was never started must not report running", TProxyService.TProxyIsRunning())
+        // Reaching the native method at all proves JNI_OnLoad found this class and
+        // registered against it: a renamed package, class or method would throw
+        // UnsatisfiedLinkError right here. Before starting, it must simply report
+        // "not running".
+        assertFalse(
+            "a tunnel that was never started must not report running",
+            TProxyService.TProxyIsRunning()
+        )
+    }
+
+    @Test
+    fun everyNativeMethodIsBound() {
+        loadOrFail()
+
+        // Each of the four natives is registered separately by JNI_OnLoad, so
+        // one working symbol does not prove the rest are wired. Calling them is
+        // the assertion: an unbound method throws UnsatisfiedLinkError, which
+        // fails the test. Their return values are not the point here.
+        try {
+            TProxyService.TProxyIsRunning()
+            TProxyService.TProxyGetStats()
+            TProxyService.TProxyStopService()
+        } catch (e: UnsatisfiedLinkError) {
+            throw AssertionError(
+                "A native method is not bound: ${e.message}. hev-jni.c registers " +
+                    "TProxyStartService/StopService/IsRunning/GetStats by name, so a " +
+                    "renamed method here breaks only that one.",
+                e
+            )
+        }
     }
 
     @Test
     fun stoppingWhenNotRunningIsHarmless() {
-        if (!libraryAvailable()) return
+        loadOrFail()
 
         // Cleanup runs this path whenever a connection fails early.
         TProxyService.TProxyStopService()
@@ -51,20 +91,36 @@ class TProxyServiceInstrumentedTest {
     }
 
     @Test
-    fun managerReportsAClearErrorWhenTheLibraryIsMissing() {
-        if (libraryAvailable()) return // only meaningful on an unpackaged ABI
-
+    fun managerFailsTheConnectionOnAnUnreadableConfig() {
         val manager = Tun2SocksManager(
             androidx.test.core.app.ApplicationProvider.getApplicationContext()
         )
-        val result = kotlinx.coroutines.runBlocking {
-            manager.start(
-                android.os.ParcelFileDescriptor.fromFd(0),
-                configPath = "/dev/null"
-            )
-        }
 
-        assertTrue("a missing library must fail the connection, not crash it", result.isFailure)
-        assertFalse(manager.isRunning())
+        // A real descriptor with a config that cannot be read: the tunnel must
+        // report failure through Result rather than throwing, since the caller
+        // tears the VPN down on a failed Result and would otherwise crash.
+        val ours = java.io.FileDescriptor()
+        val theirs = java.io.FileDescriptor()
+        android.system.Os.socketpair(
+            android.system.OsConstants.AF_UNIX,
+            android.system.OsConstants.SOCK_SEQPACKET,
+            0,
+            ours,
+            theirs
+        )
+        val fd = android.os.ParcelFileDescriptor.dup(ours)
+        android.system.Os.close(ours)
+        android.system.Os.close(theirs)
+
+        try {
+            val result = kotlinx.coroutines.runBlocking {
+                manager.start(fd, configPath = "/nonexistent/hev-config.yaml")
+            }
+            assertTrue("an unreadable config must fail the connection", result.isFailure)
+            assertFalse("nothing may be left running", manager.isRunning())
+        } finally {
+            fd.close()
+            kotlinx.coroutines.runBlocking { manager.stop() }
+        }
     }
 }

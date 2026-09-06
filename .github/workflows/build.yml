@@ -31,7 +31,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android, armv7-linux-androideabi
+          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -72,11 +72,24 @@ jobs:
             cargo build --release --no-default-features --features ring --target armv7-linux-androideabi
           }
 
+      # x86_64 is not for phones: it is what the CI emulator runs. Without it the
+      # instrumented tests find no library for their ABI and skip the checks that
+      # matter, so the JNI binding would stay unverified until someone installed
+      # the app on a real device.
+      - name: Build wstunnel for x86_64
+        working-directory: wstunnel-src
+        env:
+          CC_x86_64_linux_android: ${{ env.NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang
+          AR_x86_64_linux_android: ${{ env.NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
+          CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER: ${{ env.NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang
+        run: cargo build --release --target x86_64-linux-android
+
       - name: Rename and collect binaries
         run: |
           mkdir -p dist
           cp wstunnel-src/target/aarch64-linux-android/release/wstunnel dist/wstunnel_arm64
           cp wstunnel-src/target/armv7-linux-androideabi/release/wstunnel dist/wstunnel_armv7
+          cp wstunnel-src/target/x86_64-linux-android/release/wstunnel dist/wstunnel_x86_64
           chmod +x dist/*
           file dist/*
 
@@ -132,7 +145,7 @@ jobs:
           "${NDK_HOME}/ndk-build" \
             NDK_PROJECT_PATH=. \
             APP_BUILD_SCRIPT=Android.mk \
-            APP_ABI="arm64-v8a armeabi-v7a" \
+            APP_ABI="arm64-v8a armeabi-v7a x86_64" \
             APP_PLATFORM=android-26 \
             APP_CFLAGS="-DPKGNAME=com/ucfvpn/app/wstunnel -DCLSNAME=TProxyService" \
             NDK_LIBS_OUT=./libs \
@@ -144,13 +157,13 @@ jobs:
         run: |
           set -eux
           mkdir -p ../hev-dist
-          for abi in arm64-v8a armeabi-v7a; do
+          for abi in arm64-v8a armeabi-v7a x86_64; do
             cp "libs/${abi}/libhev-socks5-tunnel.so" "../hev-dist/hev_${abi}.so"
           done
           file ../hev-dist/*
           # The JNI entry point must be present, or the class binding silently
           # never happens and the tunnel fails only on a device.
-          for abi in arm64-v8a armeabi-v7a; do
+          for abi in arm64-v8a armeabi-v7a x86_64; do
             "${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D \
               "../hev-dist/hev_${abi}.so" | grep -q "JNI_OnLoad"
           done
@@ -192,11 +205,13 @@ jobs:
       - name: Package native executables into jniLibs
         run: |
           set -eux
-          mkdir -p app/src/main/jniLibs/arm64-v8a app/src/main/jniLibs/armeabi-v7a
+          mkdir -p app/src/main/jniLibs/arm64-v8a app/src/main/jniLibs/armeabi-v7a app/src/main/jniLibs/x86_64
           cp wstunnel-binaries/wstunnel_arm64 app/src/main/jniLibs/arm64-v8a/libwstunnel.so
           cp wstunnel-binaries/wstunnel_armv7 app/src/main/jniLibs/armeabi-v7a/libwstunnel.so
+          cp wstunnel-binaries/wstunnel_x86_64 app/src/main/jniLibs/x86_64/libwstunnel.so
           cp hev-binaries/hev_arm64-v8a.so app/src/main/jniLibs/arm64-v8a/libhev-socks5-tunnel.so
           cp hev-binaries/hev_armeabi-v7a.so app/src/main/jniLibs/armeabi-v7a/libhev-socks5-tunnel.so
+          cp hev-binaries/hev_x86_64.so app/src/main/jniLibs/x86_64/libhev-socks5-tunnel.so
           ls -la app/src/main/jniLibs/*/
 
       - name: Set up JDK 17
@@ -279,11 +294,13 @@ jobs:
       - name: Package native executables into jniLibs
         run: |
           set -eux
-          mkdir -p app/src/main/jniLibs/arm64-v8a app/src/main/jniLibs/armeabi-v7a
+          mkdir -p app/src/main/jniLibs/arm64-v8a app/src/main/jniLibs/armeabi-v7a app/src/main/jniLibs/x86_64
           cp wstunnel-binaries/wstunnel_arm64 app/src/main/jniLibs/arm64-v8a/libwstunnel.so
           cp wstunnel-binaries/wstunnel_armv7 app/src/main/jniLibs/armeabi-v7a/libwstunnel.so
+          cp wstunnel-binaries/wstunnel_x86_64 app/src/main/jniLibs/x86_64/libwstunnel.so
           cp hev-binaries/hev_arm64-v8a.so app/src/main/jniLibs/arm64-v8a/libhev-socks5-tunnel.so
           cp hev-binaries/hev_armeabi-v7a.so app/src/main/jniLibs/armeabi-v7a/libhev-socks5-tunnel.so
+          cp hev-binaries/hev_x86_64.so app/src/main/jniLibs/x86_64/libhev-socks5-tunnel.so
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
