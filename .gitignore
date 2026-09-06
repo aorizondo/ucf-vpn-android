@@ -30,3 +30,7 @@ Thumbs.db
 
 # Evidence directory
 .sisyphus/evidence/
+
+# Reportes y logs de CI descargados durante auditorías: artefactos transitorios,
+# reproducibles con `gh run download`. El HANDOFF.md sí se versiona.
+.omo/audit-*/ci-reports/

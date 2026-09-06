@@ -253,14 +253,14 @@ Hallazgos clave (2026-09-04):
 
 **Criterios de Aceptación Fase 4**:
 - [x] TUN establecido con rutas privadas + default
-- [ ] **Tráfico a `10.x.x.x` va por SSTP — NO IMPLEMENTADO.** No existe data path:
-  ningún componente lee el fd del TUN ni escribe paquetes IP en el túnel SSTP.
-  `SstpTunnelImpl` sólo negocia PPP y hace keepalive, y los paquetes entrantes con
-  protocolo IP (0x0021) se descartan. El fd del TUN se entrega **entero** a
-  hev-socks5-tunnel, así que todo el tráfico —incluido 10.0.0.0/8— iría al SOCKS5.
-  Las rutas privadas del Builder son decorativas. Requiere decidir entre integrar
-  hev-socks5-tunnel vía JNI (para filtrar por IP destino antes de entregarle el
-  paquete) o renunciar al split.
+- [~] **Tráfico a `10.x.x.x` va por SSTP — IMPLEMENTADO 2026-09-06**, sin verificar
+  en dispositivo. Antes no existía data path: nada leía el fd del TUN ni escribía
+  paquetes IP en el túnel, los frames 0x0021 se descartaban, y el fd del TUN se
+  entregaba **entero** a hev-socks5-tunnel, de modo que todo el tráfico —incluido
+  10.0.0.0/8— acababa en el SOCKS5 y las rutas privadas eran decorativas.
+  Ahora: `SplitRouter` decide por paquete, `SstpDataPath` demultiplexa, y a
+  hev-socks5-tunnel se le entrega un extremo de un socketpair AF_UNIX/SOCK_SEQPACKET
+  en lugar del TUN real.
 - [~] Tráfico a `8.8.8.8` va por hev-socks5-tunnel → wstunnel SOCKS5 → proxy HTTP
   — implementado; sin verificar en dispositivo
 - [~] DNS resuelve via SOCKS5 (`dns.tcp: true`) — implementado; sin verificar en dispositivo
@@ -618,11 +618,38 @@ mayúsculas/minúsculas, recuento de argumentos) y uno por un defecto real
 | 1. PPP Stack | `[~]` compila y pasa tests; sin probar contra el servidor UCF |
 | 2. Proxy auth | `[~]` implementado; el login ya verifica la sesión |
 | 3. wstunnel SOCKS5 | `[~]` binario ya ejecutable; sin probar en dispositivo |
-| 4. Split tunnel | `[ ]` **sin data path SSTP** — decisión pendiente |
+| 4. Split tunnel | `[~]` data path implementado 2026-09-06; sin verificar en dispositivo |
 | 5. Orquestador | `[~]` implementado; ciclo de vida corregido |
 | 6. UI + persistencia | `[~]` implementado; la config ya se propaga |
 | 7. E2E | `[ ]` pendiente |
 
-**Pendiente**: data path TUN↔SSTP (Fase 4), retirada de WireGuard del árbol,
-recuperar los tests de `app/test-broken/` (el orquestador sigue sin cobertura),
-y la verificación E2E en dispositivo.
+### 2026-09-06 — Decisión de arquitectura y data path
+
+**Aclaración del usuario**: el proxy `10.14.0.13:3128` es alcanzable desde
+cualquier punto de acceso de la red UCF, sin SSTP. Lo que el split resuelve es
+**poder abrir sitios web de la red interna** (por ejemplo el portal cautivo del
+proxy) mientras la VPN está levantada.
+
+Eso descarta la opción B2 (renunciar al split): sin enrutado real, el tráfico a la
+red interna sale por el proxy de Internet y esos sitios quedan inalcanzables. Se
+implementa por tanto el data path, con una variante más simple que la B1 original
+(no hace falta JNI):
+
+- `sstp/data/SplitRouter.kt` — decide por paquete SSTP vs SOCKS5. Sin APIs de
+  Android, por lo que la lógica se testea en JVM.
+- `sstp/data/SstpDataPath.kt` — bucles TUN→SSTP/SOCKS5 y de vuelta.
+- **El socketpair**: un `VpnService` tiene un único TUN que no se puede compartir,
+  así que a hev-socks5-tunnel se le da un extremo de un socketpair
+  AF_UNIX/SOCK_SEQPACKET. Lee y escribe paquetes IP igual que en un TUN, y
+  SEQPACKET conserva los límites de paquete. Evita JNI por completo.
+- PPP: los frames 0x0021 se separan **antes** de parsear (un paquete IP no tiene
+  Code/Id/Length, así que `parsePppFrame` los habría parseado mal).
+
+**Riesgo abierto**: que hev-socks5-tunnel acepte un socketpair donde espera un TUN
+sólo puede confirmarse en dispositivo (Fase 7). Si no lo aceptara, la alternativa
+es la integración JNI usando el módulo de librería que ya define su `Android.mk`.
+
+**Pendiente**: retirada de WireGuard del árbol, recuperar los tests de
+`app/test-broken/` (`VpnOrchestratorTest.kt` 20 KB, `VpnIntegrationTest.kt` 27 KB),
+y la verificación E2E en dispositivo (Fase 7), que es ahora lo único que puede
+validar el camino completo.

@@ -135,27 +135,28 @@ class VpnGatewayService : VpnService() {
      * 2. Close TUN interface
      * 3. Stop the service
      */
-    fun shutdown() {
+    suspend fun shutdown() {
         Timber.tag(TAG).d("Shutting down VPN components...")
 
-        // Stop WireGuard tunnel
+        // Order matters, and this used to be wrong: the cleanup ran in a
+        // launched coroutine while the TUN was closed immediately after, so the
+        // interface disappeared from under the components still using it. With
+        // the data path reading and writing that same descriptor, tearing it
+        // down first is the only safe sequence.
+        //
+        //   data path → hev-socks5-tunnel → WireGuard → TUN
+        shutdownTun2Socks()
+
         wireGuardManager?.let { manager ->
-            serviceScope.launch {
-                try {
-                    manager.stop()
-                } catch (e: Exception) {
-                    Timber.tag(TAG).e(e, "Error stopping WireGuard")
-                }
+            try {
+                manager.stop()
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Error stopping WireGuard")
             }
         }
         wireGuardManager = null
 
-        // Stop tun2socks if running
-        serviceScope.launch {
-            shutdownTun2Socks()
-        }
-
-        // Close TUN interface
+        // Close TUN interface last: nothing is reading it any more.
         tunInterface?.close()
         tunInterface = null
 
@@ -172,14 +173,14 @@ class VpnGatewayService : VpnService() {
         Timber.tag(TAG).d("VPN permission revoked")
         super.onRevoke()
 
-        // Shutdown all components
-        shutdown()
-
-        // Cancel service scope
-        serviceScope.cancel()
-
-        // Stop the service
-        stopSelf()
+        // Run the shutdown to completion before stopping. Cancelling the scope
+        // here, as this used to, killed the cleanup coroutine before it had a
+        // chance to run; blocking instead would risk an ANR, since stopping a
+        // subprocess can take seconds. The scope is cancelled in onDestroy.
+        serviceScope.launch {
+            shutdown()
+            stopSelf()
+        }
     }
 
     /**
