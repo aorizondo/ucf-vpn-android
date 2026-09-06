@@ -59,6 +59,13 @@ class VpnGatewayService : VpnService() {
         private const val NOTIFICATION_CHANNEL_ID = "ucf_vpn_channel"
         private const val NOTIFICATION_ID = 1
         private const val TAG = "VpnGatewayService"
+
+        /**
+         * Prefix for the TUN address. /32 so the interface claims only the
+         * address PPP assigned and does not shadow the rest of the subnet,
+         * which must keep routing through the tunnel.
+         */
+        private const val TUN_PREFIX_LENGTH = 32
     }
 
     private var tunInterface: ParcelFileDescriptor? = null
@@ -294,20 +301,19 @@ class VpnGatewayService : VpnService() {
             builder.addRoute("::", 0)
         }
 
-        // CRITICAL: exclude this app from the VPN.
+        // NOTE: this app is deliberately NOT excluded from the VPN.
         //
-        // The wstunnel subprocess runs under this app's UID, so without this
-        // exclusion the default route above captures wstunnel's own socket and
-        // feeds it back into the tunnel it is supposed to serve. The captive
-        // portal route (10.14.0.0/16) closes the same circle: TUN →
-        // hev-socks5-tunnel → wstunnel → 10.14.0.13, which is wstunnel's own
-        // upstream proxy.
+        // An earlier version excluded it, to keep wstunnel's socket out of the
+        // tunnel it serves. That is wrong for this deployment: the SSTP link is
+        // what places the device inside the UCF network, so from outside the
+        // campus the HTTP proxy at 10.14.0.13 is reachable ONLY through the
+        // tunnel. Excluding the app sent wstunnel out over mobile data, where
+        // that address does not exist.
         //
-        // Starting wstunnel before establish() does NOT prevent this: protect()
-        // marks a socket, it is not a function of when the socket was created,
-        // and any new connection the subprocess opens is routed through the VPN.
-        builder.addDisallowedApplication(packageName)
-
+        // There is no loop to avoid: wstunnel only ever talks to the internal
+        // proxy — it is the proxy that reaches the Internet — and the SSTP
+        // socket itself bypasses the tunnel through protect().
+        //
         // User-selected apps that should bypass the VPN entirely.
         for (pkg in bypassApps) {
             if (pkg == packageName) continue // already excluded above
@@ -373,6 +379,9 @@ class VpnGatewayService : VpnService() {
 
     /** Our end of the socket pair that stands in for hev-socks5-tunnel's TUN. */
     private var socks5OurSide: ParcelFileDescriptor? = null
+
+    /** hev's end, held between [establishSplitTunnel] and [startSocks5Bridge]. */
+    private var socks5PendingHevSide: ParcelFileDescriptor? = null
 
     /**
      * Delivers a raw PPP frame to the SSTP tunnel. Set by the orchestrator once
@@ -448,37 +457,46 @@ class VpnGatewayService : VpnService() {
      * @return Result.success(Unit) if the split tunnel started,
      *   Result.failure(exception) otherwise
      */
-    suspend fun startWithSplitTunnelSocks5(
+    /**
+     * Phase 1: bring up the TUN interface and start moving packets.
+     *
+     * Split from the SOCKS5 side on purpose. The SSTP link is what places the
+     * device inside the UCF network, so from outside the campus both the captive
+     * portal and the HTTP proxy are reachable ONLY through the tunnel — and they
+     * are needed *before* wstunnel can run. Establishing the TUN last, as this
+     * used to, left those steps going out over the physical network, where those
+     * addresses do not exist, and the connection could never succeed away from
+     * the campus.
+     *
+     * Once this returns, traffic to [privateNetworks] flows through SSTP.
+     * Everything else follows the default route into the socket pair, which has
+     * no reader until [startSocks5Bridge] runs, so Internet traffic is dropped
+     * for those few seconds rather than leaking outside the tunnel.
+     *
+     * @param privateNetworks CIDRs routed through the SSTP tunnel
+     * @param localAddress address PPP assigned us; packets leaving the tunnel
+     *   carry it as their source, so a made-up value would have replies dropped
+     *   by the UCF network
+     * @param dnsServers resolvers PPP assigned; internal names do not resolve
+     *   against public ones
+     * @param bypassApps packages excluded from the VPN
+     */
+    suspend fun establishSplitTunnel(
         privateNetworks: List<String> = listOf("10.0.0.0/8", "192.168.0.0/16", "172.16.0.0/12"),
-        socks5Proxy: String = "127.0.0.1:1080",
-        vpnConfig: VpnConfig = VpnConfig.DEFAULT,
-        dnsViaSocks5: Boolean = true,
+        localAddress: String,
+        dnsServers: List<String>,
+        mtu: Int = VpnConfig.DEFAULT.mtu,
         bypassApps: List<String> = emptyList()
     ): Result<Unit> {
-        Timber.tag(TAG).d("Starting with split tunnel + hev-socks5-tunnel...")
+        Timber.tag(TAG).d("Establishing split tunnel (ip=%s dns=%s)", localAddress, dnsServers)
 
-        // Parse "host:port" SOCKS5 proxy
-        val (socks5Host, socks5Port) = try {
-            parseSocks5Proxy(socks5Proxy)
-        } catch (e: IllegalArgumentException) {
-            Timber.tag(TAG).e(e, "Invalid socks5Proxy")
-            return Result.failure(e)
-        }
-
-        // Initialize Tun2SocksManager if not already done
-        if (tun2SocksManager == null) {
-            tun2SocksManager = Tun2SocksManager(this)
-        }
-        val manager = tun2SocksManager!!
-
-        // 1. Establish split TUN interface (private routes + default route)
         val tunFd = try {
             establishSplitTunInterface(
                 privateNetworks = privateNetworks,
-                address = vpnConfig.address,
-                prefixLength = vpnConfig.prefixLength,
-                mtu = vpnConfig.mtu,
-                dnsServers = vpnConfig.dnsServers,
+                address = localAddress,
+                prefixLength = TUN_PREFIX_LENGTH,
+                mtu = mtu,
+                dnsServers = dnsServers,
                 bypassApps = bypassApps
             )
         } catch (e: IllegalArgumentException) {
@@ -489,33 +507,23 @@ class VpnGatewayService : VpnService() {
         if (tunFd == null) {
             val msg = "Failed to establish split TUN interface"
             Timber.tag(TAG).e(msg)
-            return Result.failure(Exception(msg))
+            return Result.failure(IllegalStateException(msg))
         }
 
-        // 2. Generate dynamic YAML with the configured SOCKS5 proxy
-        val yamlPath = HevSocks5TunnelConfigGenerator.generate(
-            context = this,
-            socks5Host = socks5Host,
-            socks5Port = socks5Port,
-            dnsViaSocks5 = dnsViaSocks5
-        ).getOrElse { e ->
-            Timber.tag(TAG).e(e, "Failed to generate hev-socks5-tunnel config")
+        val sender = sendToSstp
+        if (sender == null) {
+            val msg = "No SSTP sender wired: cannot route internal traffic"
+            Timber.tag(TAG).e(msg)
             tunFd.close()
             tunInterface = null
-            return Result.failure(e)
+            return Result.failure(IllegalStateException(msg))
         }
 
-        Timber.tag(TAG).d("Split TUN established, starting hev-socks5-tunnel with $yamlPath...")
-
-        // 3. Build the socket pair that stands in for the TUN on the SOCKS5 side.
-        //
-        // hev-socks5-tunnel cannot be handed the real TUN descriptor: it would
-        // then receive EVERY packet, including the traffic bound for the UCF
-        // internal networks, which is exactly what the split has to keep out of
-        // the proxy. It gets one end of an AF_UNIX/SOCK_SEQPACKET pair instead —
-        // it reads and writes raw IP packets there just as it would on a TUN,
-        // and SEQPACKET preserves the packet boundaries a datagram device needs.
-        // SstpDataPath owns the demultiplexing between the two.
+        // hev-socks5-tunnel cannot be handed the real TUN: it would receive
+        // every packet, including the internal traffic the split exists to keep
+        // out of the proxy. It gets one end of an AF_UNIX/SOCK_SEQPACKET pair
+        // instead, reading and writing IP packets exactly as it would on a TUN;
+        // SEQPACKET preserves the packet boundaries a datagram device needs.
         val socketPair = try {
             createSocks5SocketPair()
         } catch (e: Exception) {
@@ -526,60 +534,16 @@ class VpnGatewayService : VpnService() {
         }
         val (ourSide, hevSide) = socketPair
 
-        // 4. Start hev-socks5-tunnel against its end of the pair
-        val startResult = manager.start(hevSide, yamlPath)
-        if (startResult.isFailure) {
-            closeQuietly(ourSide)
-            closeQuietly(hevSide)
-            tunFd.close()
-            tunInterface = null
-            return startResult
-        }
-
-        // 4. Verify hev-socks5-tunnel is actually alive.
-        //
-        // Checking `state == RUNNING` alone is tautological: start() sets RUNNING
-        // unconditionally right before returning success, so the check can never
-        // fail. isAlive() asks the OS instead, which catches a binary that died
-        // on launch (wrong ABI, bad config, SELinux denial).
-        if (!manager.isRunning()) {
-            val msg = "hev-socks5-tunnel exited immediately after launch"
-            Timber.tag(TAG).e(msg)
-            // Leaving the TUN up here would blackhole ALL device traffic: the
-            // interface holds the default route with nothing serving it.
-            manager.stop()
-            closeQuietly(ourSide)
-            closeQuietly(hevSide)
-            tunFd.close()
-            tunInterface = null
-            return Result.failure(Exception(msg))
-        }
-
-        // 5. Start the demultiplexer: internal networks to SSTP, the rest to
-        // hev-socks5-tunnel. Without this the private routes are decorative.
-        val sender = sendToSstp
-        if (sender == null) {
-            val msg = "No SSTP sender wired: cannot route internal traffic"
-            Timber.tag(TAG).e(msg)
-            manager.stop()
-            closeQuietly(ourSide)
-            closeQuietly(hevSide)
-            tunFd.close()
-            tunInterface = null
-            return Result.failure(IllegalStateException(msg))
-        }
-
         val path = try {
             SstpDataPath(
                 tunFd = tunFd,
                 socks5Side = ourSide,
                 router = SplitRouter(privateNetworks),
                 sendToSstp = sender,
-                mtu = vpnConfig.mtu
+                mtu = mtu
             ).also { it.start() }
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Failed to start the data path")
-            manager.stop()
             closeQuietly(ourSide)
             closeQuietly(hevSide)
             tunFd.close()
@@ -587,17 +551,76 @@ class VpnGatewayService : VpnService() {
             return Result.failure(e)
         }
 
-        // The subprocess inherited its end when it forked, so this copy has to go:
-        // as long as the parent holds it open, a read on our end can never see
-        // EOF, not even when hev-socks5-tunnel dies.
-        closeQuietly(hevSide)
-
         dataPath = path
         socks5OurSide = ourSide
+        socks5PendingHevSide = hevSide
 
-        Timber.tag(TAG).d(
-            "Split tunnel started: private=$privateNetworks socks5=$socks5Proxy dnsViaSocks5=$dnsViaSocks5"
-        )
+        Timber.tag(TAG).d("Split tunnel up: private=%s", privateNetworks)
+        return Result.success(Unit)
+    }
+
+    /**
+     * Phase 2: hand the Internet side to hev-socks5-tunnel.
+     *
+     * Runs once wstunnel's SOCKS5 listener is ready, which itself needs the
+     * tunnel from phase 1 to reach the proxy.
+     *
+     * @param socks5Proxy local SOCKS5 endpoint in `host:port` form
+     * @param dnsViaSocks5 resolve DNS over TCP through the proxy
+     */
+    suspend fun startSocks5Bridge(
+        socks5Proxy: String = "127.0.0.1:1080",
+        dnsViaSocks5: Boolean = true
+    ): Result<Unit> {
+        val hevSide = socks5PendingHevSide
+        if (hevSide == null) {
+            val msg = "startSocks5Bridge called before establishSplitTunnel"
+            Timber.tag(TAG).e(msg)
+            return Result.failure(IllegalStateException(msg))
+        }
+
+        val (socks5Host, socks5Port) = try {
+            parseSocks5Proxy(socks5Proxy)
+        } catch (e: IllegalArgumentException) {
+            Timber.tag(TAG).e(e, "Invalid socks5Proxy")
+            return Result.failure(e)
+        }
+
+        if (tun2SocksManager == null) {
+            tun2SocksManager = Tun2SocksManager(this)
+        }
+        val manager = tun2SocksManager!!
+
+        val yamlPath = HevSocks5TunnelConfigGenerator.generate(
+            context = this,
+            socks5Host = socks5Host,
+            socks5Port = socks5Port,
+            dnsViaSocks5 = dnsViaSocks5
+        ).getOrElse { e ->
+            Timber.tag(TAG).e(e, "Failed to generate hev-socks5-tunnel config")
+            return Result.failure(e)
+        }
+
+        val startResult = manager.start(hevSide, yamlPath)
+        if (startResult.isFailure) {
+            return startResult
+        }
+
+        // Ask the library instead of assuming: a tunnel that died on launch
+        // would otherwise be reported as healthy.
+        if (!manager.isRunning()) {
+            val msg = "hev-socks5-tunnel exited immediately after launch"
+            Timber.tag(TAG).e(msg)
+            manager.stop()
+            return Result.failure(IllegalStateException(msg))
+        }
+
+        // The library runs in-process and has taken the descriptor; our copy is
+        // no longer needed.
+        closeQuietly(hevSide)
+        socks5PendingHevSide = null
+
+        Timber.tag(TAG).d("SOCKS5 bridge up: socks5=%s dnsViaSocks5=%s", socks5Proxy, dnsViaSocks5)
         return Result.success(Unit)
     }
 
@@ -667,7 +690,9 @@ class VpnGatewayService : VpnService() {
         dataPath?.stop()
         dataPath = null
         closeQuietly(socks5OurSide)
+        closeQuietly(socks5PendingHevSide)
         socks5OurSide = null
+        socks5PendingHevSide = null
 
         tun2SocksManager?.let { manager ->
             try {

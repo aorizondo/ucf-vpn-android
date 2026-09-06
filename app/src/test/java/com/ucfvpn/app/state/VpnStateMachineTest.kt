@@ -49,6 +49,7 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         assertTrue(stateMachine.transition(VpnState.ProxyAuthenticated))
         assertEquals(VpnState.ProxyAuthenticated, stateMachine.state.value)
@@ -62,6 +63,7 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         assertTrue(stateMachine.transition(VpnState.ProxyError("Auth failed")))
         assertTrue(stateMachine.state.value is VpnState.ProxyError)
@@ -75,6 +77,7 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         stateMachine.transition(VpnState.ProxyAuthenticated)
         assertTrue(stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5)))
@@ -89,6 +92,7 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         stateMachine.transition(VpnState.ProxyAuthenticated)
         stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
@@ -104,6 +108,7 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         stateMachine.transition(VpnState.ProxyAuthenticated)
         stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
@@ -119,6 +124,7 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         stateMachine.transition(VpnState.ProxyAuthenticated)
         stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
@@ -135,6 +141,7 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         stateMachine.transition(VpnState.ProxyAuthenticated)
         stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
@@ -152,6 +159,7 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         stateMachine.transition(VpnState.ProxyAuthenticated)
         stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
@@ -162,21 +170,22 @@ class VpnStateMachineTest {
     }
 
     @Test
-    fun `WireGuardConnected can transition to VpnStarting`() = runTest {
+    fun `WireGuardConnected can transition to VpnRunning`() = runTest {
         stateMachine.transition(VpnState.SstpConnecting)
         stateMachine.transition(VpnState.SstpConnected)
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.LCP))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         stateMachine.transition(VpnState.ProxyAuthenticated)
         stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
         stateMachine.transition(VpnState.WstunnelRunning(1080))
         stateMachine.transition(VpnState.WireGuardConnecting)
         stateMachine.transition(VpnState.WireGuardConnected)
-        assertTrue(stateMachine.transition(VpnState.VpnStarting))
-        assertEquals(VpnState.VpnStarting, stateMachine.state.value)
+        assertTrue(stateMachine.transition(VpnState.VpnRunning))
+        assertEquals(VpnState.VpnRunning, stateMachine.state.value)
     }
 
     @Test
@@ -187,13 +196,11 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         stateMachine.transition(VpnState.ProxyAuthenticated)
         stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
         stateMachine.transition(VpnState.WstunnelRunning(1080))
-        stateMachine.transition(VpnState.WireGuardConnecting)
-        stateMachine.transition(VpnState.WireGuardConnected)
-        stateMachine.transition(VpnState.VpnStarting)
         assertTrue(stateMachine.transition(VpnState.VpnRunning))
         assertEquals(VpnState.VpnRunning, stateMachine.state.value)
     }
@@ -219,13 +226,11 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         stateMachine.transition(VpnState.ProxyAuthenticated)
         stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
         stateMachine.transition(VpnState.WstunnelRunning(1080))
-        stateMachine.transition(VpnState.WireGuardConnecting)
-        stateMachine.transition(VpnState.WireGuardConnected)
-        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.VpnRunning)
 
         // Valid - VpnRunning can go to Disconnected
@@ -238,13 +243,11 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         stateMachine.transition(VpnState.ProxyAuthenticated)
         stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
         stateMachine.transition(VpnState.WstunnelRunning(1080))
-        stateMachine.transition(VpnState.WireGuardConnecting)
-        stateMachine.transition(VpnState.WireGuardConnected)
-        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.VpnRunning)
 
         // A live tunnel that drops must be able to restart the sequence,
@@ -271,11 +274,11 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         stateMachine.transition(VpnState.ProxyAuthenticated)
         stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
         stateMachine.transition(VpnState.WstunnelRunning(1080))
-        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.VpnRunning)
     }
 
@@ -294,6 +297,7 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         stateMachine.transition(VpnState.ProxyError("error"))
         assertFalse(stateMachine.transition(VpnState.WireGuardConnected))
@@ -315,6 +319,7 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         stateMachine.transition(VpnState.ProxyAuthenticated)
         stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
@@ -351,13 +356,13 @@ class VpnStateMachineTest {
         assertTrue(stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH)))
         assertTrue(stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP)))
         assertTrue(stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2")))
+        assertTrue(stateMachine.transition(VpnState.VpnStarting))
         assertTrue(stateMachine.transition(VpnState.ProxyAuthenticating))
         assertTrue(stateMachine.transition(VpnState.ProxyAuthenticated))
         assertTrue(stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5)))
         assertTrue(stateMachine.transition(VpnState.WstunnelRunning(1080)))
         assertTrue(stateMachine.transition(VpnState.WireGuardConnecting))
         assertTrue(stateMachine.transition(VpnState.WireGuardConnected))
-        assertTrue(stateMachine.transition(VpnState.VpnStarting))
         assertTrue(stateMachine.transition(VpnState.VpnRunning))
 
         assertEquals(VpnState.VpnRunning, stateMachine.state.value)
@@ -387,13 +392,11 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         stateMachine.transition(VpnState.ProxyAuthenticated)
         stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
         stateMachine.transition(VpnState.WstunnelRunning(1080))
-        stateMachine.transition(VpnState.WireGuardConnecting)
-        stateMachine.transition(VpnState.WireGuardConnected)
-        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.VpnRunning)
 
         val history = stateMachine.stateHistory.value
@@ -418,13 +421,11 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         stateMachine.transition(VpnState.ProxyAuthenticated)
         stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
         stateMachine.transition(VpnState.WstunnelRunning(1080))
-        stateMachine.transition(VpnState.WireGuardConnecting)
-        stateMachine.transition(VpnState.WireGuardConnected)
-        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.VpnRunning)
 
         assertTrue(stateMachine.connect()) // Should return true, already connected
@@ -449,6 +450,7 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         assertTrue(stateMachine.disconnect())
         assertEquals(VpnState.Disconnected, stateMachine.state.value)
@@ -513,9 +515,6 @@ class VpnStateMachineTest {
         assertTrue(stateMachine.transition(VpnState.WireGuardConnected))
         assertEquals(VpnState.WireGuardConnected, stateMachine.state.value)
 
-        assertTrue(stateMachine.transition(VpnState.VpnStarting))
-        assertEquals(VpnState.VpnStarting, stateMachine.state.value)
-
         assertTrue(stateMachine.transition(VpnState.VpnRunning))
         assertEquals(VpnState.VpnRunning, stateMachine.state.value)
     }
@@ -578,19 +577,20 @@ class VpnStateMachineTest {
     }
 
     @Test
-    fun `WstunnelRunning can transition to VpnStarting`() = runTest {
+    fun `WstunnelRunning can transition to VpnRunning`() = runTest {
         stateMachine.transition(VpnState.SstpConnecting)
         stateMachine.transition(VpnState.SstpConnected)
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.LCP))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         stateMachine.transition(VpnState.ProxyAuthenticated)
         stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
         stateMachine.transition(VpnState.WstunnelRunning(1080))
-        assertTrue(stateMachine.transition(VpnState.VpnStarting))
-        assertEquals(VpnState.VpnStarting, stateMachine.state.value)
+        assertTrue(stateMachine.transition(VpnState.VpnRunning))
+        assertEquals(VpnState.VpnRunning, stateMachine.state.value)
     }
 
     @Test
@@ -611,6 +611,7 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         stateMachine.transition(VpnState.ProxyError("auth failed"))
         assertTrue(stateMachine.transition(VpnState.ProxyAuthenticating))
@@ -625,6 +626,7 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         stateMachine.transition(VpnState.ProxyAuthenticated)
         stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
@@ -641,11 +643,11 @@ class VpnStateMachineTest {
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+        stateMachine.transition(VpnState.VpnStarting)
         stateMachine.transition(VpnState.ProxyAuthenticating)
         stateMachine.transition(VpnState.ProxyAuthenticated)
         stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
         stateMachine.transition(VpnState.WstunnelRunning(1080))
-        stateMachine.transition(VpnState.VpnStarting)
         assertTrue(stateMachine.transition(VpnState.WireGuardError("VPN failed")))
         assertTrue(stateMachine.state.value is VpnState.WireGuardError)
     }

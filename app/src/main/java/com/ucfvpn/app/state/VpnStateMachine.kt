@@ -112,14 +112,19 @@ class VpnStateMachine {
             is VpnState.SstpConnected -> to is VpnState.PppNegotiating
             is VpnState.PppNegotiating ->
                 to is VpnState.PppNegotiating || to is VpnState.PppAuthenticated || to is VpnState.SstpError
-            is VpnState.PppAuthenticated -> to == VpnState.ProxyAuthenticating
+            // The TUN comes up right after PPP, before the captive portal and
+            // wstunnel: away from the campus those are reachable only through
+            // the tunnel, so they cannot precede it.
+            is VpnState.PppAuthenticated -> to == VpnState.VpnStarting
+            is VpnState.VpnStarting -> to == VpnState.ProxyAuthenticating || to is VpnState.WireGuardError
             is VpnState.ProxyAuthenticating -> to == VpnState.ProxyAuthenticated || to is VpnState.ProxyError
             is VpnState.ProxyAuthenticated -> to is VpnState.WstunnelStarting
             is VpnState.WstunnelStarting -> to is VpnState.WstunnelRunning || to is VpnState.WstunnelError
-            is VpnState.WstunnelRunning -> to == VpnState.VpnStarting || to == VpnState.WireGuardConnecting
+            // Last step bridges Internet traffic; the tunnel is already up.
+            is VpnState.WstunnelRunning -> to == VpnState.VpnRunning ||
+                to == VpnState.WireGuardConnecting || to is VpnState.WireGuardError
             is VpnState.WireGuardConnecting -> to == VpnState.WireGuardConnected || to is VpnState.WireGuardError
-            is VpnState.WireGuardConnected -> to == VpnState.VpnStarting
-            is VpnState.VpnStarting -> to == VpnState.VpnRunning || to is VpnState.WireGuardError
+            is VpnState.WireGuardConnected -> to == VpnState.VpnRunning
             // A live tunnel can drop: it must be able to report the failure and
             // to restart the sequence. Allowing only Disconnected here made
             // auto-reconnect impossible (ReconnectManager restarts from

@@ -534,7 +534,51 @@ class VpnOrchestrator(
             emitLog("INFO", "PPP: Authenticated, IP assigned: $localIp")
         }
 
-        // ── Layer 3: Proxy Authentication ──
+        // ── Layer 3: split tunnel ──
+        //
+        // The TUN has to exist BEFORE the captive portal and wstunnel, not after
+        // them. The SSTP link is what places the device inside the UCF network,
+        // so away from the campus both the portal and the HTTP proxy are
+        // reachable only through the tunnel — and both are needed to finish
+        // connecting. Establishing it last sent those steps out over the
+        // physical network, where those addresses do not exist.
+        if (!stateMachine.transition(VpnState.VpnStarting)) {
+            throw IllegalStateException("Failed to transition to VpnStarting")
+        }
+        emitLog("INFO", "VPN: Establishing split TUN interface...")
+
+        val vpnService = vpnService
+            ?: throw IllegalStateException("VpnGatewayService not available")
+
+        // Wire the data path in both directions before any packet can flow.
+        vpnService.sendToSstp = { frame -> sstpTunnel.send(frame) }
+        sstpTunnel.onIpPacket = { packet -> vpnService.onPacketFromSstp(packet) }
+
+        val assignment = pppAssignment
+            ?: throw IllegalStateException("PPP did not report an address assignment")
+
+        try {
+            val tunnelResult = vpnService.establishSplitTunnel(
+                privateNetworks = appConfig.splitTunnelConfig.privateNetworks,
+                localAddress = assignment.localIp,
+                dnsServers = listOfNotNull(
+                    assignment.dns1.takeIf { it.isNotBlank() && it != UNSET_IP },
+                    assignment.dns2.takeIf { it.isNotBlank() && it != UNSET_IP }
+                ),
+                bypassApps = appConfig.splitTunnelConfig.bypassApps
+            )
+            if (tunnelResult.isFailure) {
+                throw tunnelResult.exceptionOrNull() ?: Exception("Unknown split tunnel error")
+            }
+            emitLog("INFO", "VPN: Split tunnel established, internal networks reachable")
+        } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "Split tunnel failed")
+            lastErrorStage = "VPN"
+            stateMachine.transition(VpnState.WireGuardError("VPN failed: ${e.message}"))
+            throw e
+        }
+
+        // ── Layer 4: Proxy Authentication (through the tunnel) ──
         if (!stateMachine.transition(VpnState.ProxyAuthenticating)) {
             throw IllegalStateException("Failed to transition to ProxyAuthenticating")
         }
@@ -559,7 +603,7 @@ class VpnOrchestrator(
         }
         emitLog("INFO", "Proxy: Session verified")
 
-        // ── Layer 4: wstunnel SOCKS5 ──
+        // ── Layer 5: wstunnel SOCKS5 (reaches the proxy through the tunnel) ──
         val socks5Config = buildSocks5Config(appConfig)
         if (!stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))) {
             throw IllegalStateException("Failed to transition to WstunnelStarting")
@@ -576,7 +620,6 @@ class VpnOrchestrator(
 
             emitLog("INFO", "wstunnel: Process started")
 
-            // Wait for the local SOCKS5 listener to accept a real handshake
             if (!wstunnelManager.waitForSocks5Ready(
                     port = WSTUNNEL_SOCKS5_PORT,
                     timeoutMs = WSTUNNEL_SOCKS5_READY_TIMEOUT_MS
@@ -591,41 +634,19 @@ class VpnOrchestrator(
             throw IllegalStateException("Failed to transition to WstunnelRunning")
         }
 
-        // ── Layer 5: VPN Split Tunnel ──
-        if (!stateMachine.transition(VpnState.VpnStarting)) {
-            throw IllegalStateException("Failed to transition to VpnStarting")
-        }
-        emitLog("INFO", "VPN: Establishing split TUN interface...")
-
+        // ── Layer 6: hand the Internet side to hev-socks5-tunnel ──
+        emitLog("INFO", "VPN: Bridging Internet traffic to SOCKS5...")
         try {
-            val vpnService = vpnService
-                ?: throw IllegalStateException("VpnGatewayService not available")
-
-            // Wire the data path in BOTH directions before the tunnel starts.
-            // Outbound: internal packets leave through the SSTP tunnel.
-            // Inbound: packets arriving from SSTP are written back to the TUN.
-            // Without this the private routes are decorative and every packet
-            // ends up in the SOCKS5 proxy, which is what kept the internal UCF
-            // sites unreachable while the VPN was up.
-            vpnService.sendToSstp = { frame -> sstpTunnel.send(frame) }
-            sstpTunnel.onIpPacket = { packet -> vpnService.onPacketFromSstp(packet) }
-
-            val vpnResult = vpnService.startWithSplitTunnelSocks5(
-                privateNetworks = appConfig.splitTunnelConfig.privateNetworks,
-                socks5Proxy = "127.0.0.1:$WSTUNNEL_SOCKS5_PORT",
-                bypassApps = appConfig.splitTunnelConfig.bypassApps
+            val bridgeResult = vpnService.startSocks5Bridge(
+                socks5Proxy = "127.0.0.1:$WSTUNNEL_SOCKS5_PORT"
             )
-
-            if (vpnResult.isFailure) {
-                throw vpnResult.exceptionOrNull()
-                    ?: Exception("Unknown VPN error")
+            if (bridgeResult.isFailure) {
+                throw bridgeResult.exceptionOrNull() ?: Exception("Unknown SOCKS5 bridge error")
             }
-
-            emitLog("INFO", "VPN: Split tunnel established")
+            emitLog("INFO", "VPN: Internet traffic bridged")
             lastErrorStage = null
-
         } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "VPN start failed")
+            Timber.tag(TAG).e(e, "SOCKS5 bridge failed")
             lastErrorStage = "VPN"
             stateMachine.transition(VpnState.WireGuardError("VPN failed: ${e.message}"))
             throw e
@@ -686,6 +707,9 @@ class VpnOrchestrator(
 
     private var sstpCurrentState: SstpState = SstpState.DISCONNECTED
 
+    /** Address and resolvers IPCP assigned, used to configure the TUN. */
+    private var pppAssignment: PppEvent.IpAssigned? = null
+
     private fun setupSstpCallbacks() {
         sstpTunnel.onStateChanged = { sstpState ->
             scope.launch {
@@ -718,6 +742,11 @@ class VpnOrchestrator(
                         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
                     }
                     is PppEvent.IpAssigned -> {
+                        // Kept for the TUN: the interface must carry the address
+                        // PPP assigned and resolve against the servers it gave
+                        // us, or packets leave with a source the UCF network
+                        // does not know and internal names do not resolve.
+                        pppAssignment = event
                         emitLog(
                             "INFO",
                             "PPP: IP ${event.localIp} (gw ${event.gateway}, dns ${event.dns1} ${event.dns2})"
@@ -851,6 +880,7 @@ class VpnOrchestrator(
             // tunnel that is being torn down.
             sstpTunnel.onIpPacket = null
             vpnService?.sendToSstp = null
+            pppAssignment = null
             vpnService?.shutdown()
             emitLog("INFO", "VPN: Shutdown complete")
         } catch (e: Exception) {
@@ -914,6 +944,9 @@ class VpnOrchestrator(
 
         // wstunnel SOCKS5 (Fase 5)
         private const val WSTUNNEL_SOCKS5_PORT = 1080
+
+        /** What IPCP reports when it assigned no address for a field. */
+        private const val UNSET_IP = "0.0.0.0"
         private const val WSTUNNEL_SOCKS5_READY_TIMEOUT_MS = 10_000L
     }
 }
