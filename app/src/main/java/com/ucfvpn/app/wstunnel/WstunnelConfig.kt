@@ -64,7 +64,25 @@ data class WstunnelConfig(
     val websocketPingFrequency: String = "10s",
 
     /** Log verbosity level (TRACE, DEBUG, INFO, WARN, ERROR, OFF). */
-    val logLevel: String = "INFO"
+    val logLevel: String = "INFO",
+
+    /**
+     * Idle connections wstunnel keeps open to the server (`--connection-min-idle`).
+     *
+     * wstunnel's default is 0, i.e. no pool: every tunnel pays a full TCP + TLS
+     * + proxy CONNECT + WebSocket handshake before it can carry a byte. In UDP
+     * mode that cost is paid once, because WireGuard multiplexes everything into
+     * a single flow — but in SOCKS5 mode each TCP connection is its own tunnel,
+     * and a page like YouTube opens dozens at once. The result is partially
+     * loaded pages: the burst of handshakes through the HTTP proxy is slow
+     * enough that some requests give up.
+     *
+     * The option exists for exactly this case; its own documentation reads
+     * "useful if you plan to create/destroy a lot of tunnel (i.e: with socks5 to
+     * navigate with a browser)". Kept at 0 for the UDP/TCP modes, where a pool
+     * buys nothing.
+     */
+    val connectionMinIdle: Int = 0
 ) {
     /** Forwarding mode: FIXED (hardcoded target) or DYNAMIC (server-determined target). */
     enum class Mode { FIXED, DYNAMIC }
@@ -101,7 +119,7 @@ data class WstunnelConfig(
             "http://${proxyAuth}@${proxyHost}:${proxyPort}"
         }
 
-        return listOf(
+        val command = mutableListOf(
             binaryPath,
             "client",
             "-L", listenArg,
@@ -111,6 +129,14 @@ data class WstunnelConfig(
             "--websocket-ping-frequency", websocketPingFrequency,
             "--log-lvl", logLevel
         )
+
+        // Only worth passing when a pool is actually wanted: 0 is wstunnel's own
+        // default and adding the flag would just be noise in the process list.
+        if (connectionMinIdle > 0) {
+            command += listOf("--connection-min-idle", connectionMinIdle.toString())
+        }
+
+        return command
     }
 
     companion object {
@@ -130,7 +156,8 @@ data class WstunnelConfig(
             proxyHost: String = "10.14.0.13",
             proxyPort: Int = 3128,
             proxyAuth: String? = null,
-            logLevel: String = "INFO"
+            logLevel: String = "INFO",
+            connectionMinIdle: Int = DEFAULT_SOCKS5_MIN_IDLE
         ): WstunnelConfig = WstunnelConfig(
             tunnelType = TunnelType.SOCKS5,
             localPort = localPort,
@@ -138,7 +165,16 @@ data class WstunnelConfig(
             proxyHost = proxyHost,
             proxyPort = proxyPort,
             proxyAuth = proxyAuth,
-            logLevel = logLevel
+            logLevel = logLevel,
+            connectionMinIdle = connectionMinIdle
         )
+
+        /**
+         * Idle connections to keep ready in SOCKS5 mode.
+         *
+         * Enough to absorb the burst a page load produces without holding a
+         * large number of sockets open through the HTTP proxy.
+         */
+        const val DEFAULT_SOCKS5_MIN_IDLE = 10
     }
 }

@@ -141,6 +141,25 @@ class VpnOrchestratorTest {
         assertEquals("7s", used.websocketPingFrequency)
     }
 
+    @Test
+    fun `the SOCKS5 tunnel is given a connection pool`() = runTest {
+        // The UI config is built for UDP mode and carries wstunnel's default of
+        // 0 idle connections, so copying it unchanged would leave every SOCKS5
+        // tunnel paying a full TCP + TLS + proxy CONNECT + WebSocket handshake.
+        // That is what left pages partially loaded in manual testing.
+        val orchestrator = orchestrator()
+        val configSlot = mutableListOf<WstunnelConfig>()
+        coEvery { wstunnelManager.start(capture(configSlot)) } returns Result.success(Unit)
+
+        orchestrator.start(config())
+        advanceUntilIdle()
+
+        assertEquals(
+            WstunnelConfig.DEFAULT_SOCKS5_MIN_IDLE,
+            configSlot.single().connectionMinIdle
+        )
+    }
+
     // NOTE: the PPP phase display (LCP → AUTH → IPCP now driven by real
     // PppEvent callbacks instead of being emitted all at once) is deliberately
     // NOT asserted here. Whether a phase transition is accepted depends on a

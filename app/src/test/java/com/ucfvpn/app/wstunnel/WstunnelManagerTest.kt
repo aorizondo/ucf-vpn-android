@@ -71,6 +71,42 @@ class WstunnelManagerTest {
         assertEquals(TunnelType.UDP, dyn.tunnelType)
     }
 
+    // ── connection pool ───────────────────────────────────────────
+
+    @Test
+    fun `socks5 keeps idle connections ready by default`() {
+        // wstunnel's own default is 0, i.e. no pool, and in SOCKS5 mode every
+        // TCP connection is a separate tunnel: a page opening dozens at once
+        // pays a full TCP + TLS + proxy CONNECT + WebSocket handshake for each,
+        // which is what left pages partially loaded.
+        val cmd = WstunnelConfig.socks5().buildCommand(binaryPath)
+
+        val idx = cmd.indexOf("--connection-min-idle")
+        assertTrue("SOCKS5 must request a connection pool", idx >= 0)
+        assertEquals(WstunnelConfig.DEFAULT_SOCKS5_MIN_IDLE.toString(), cmd[idx + 1])
+    }
+
+    @Test
+    fun `the pool flag is omitted when no pool is wanted`() {
+        // UDP multiplexes everything into one flow, so a pool buys nothing and
+        // the flag would only add noise.
+        val cmd = defaultConfig.buildCommand(binaryPath)
+
+        assertFalse(
+            "UDP mode must not request a pool",
+            cmd.contains("--connection-min-idle")
+        )
+    }
+
+    @Test
+    fun `an explicit pool size is honoured`() {
+        val cmd = WstunnelConfig.socks5(connectionMinIdle = 3).buildCommand(binaryPath)
+
+        val idx = cmd.indexOf("--connection-min-idle")
+        assertTrue(idx >= 0)
+        assertEquals("3", cmd[idx + 1])
+    }
+
     // ── socks5 factory ────────────────────────────────────────────
 
     @Test

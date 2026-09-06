@@ -468,7 +468,11 @@ class VpnOrchestrator(
         // Only the SOCKS5-specific bits are overridden here.
         return appConfig.wstunnelConfig.copy(
             tunnelType = TunnelType.SOCKS5,
-            localPort = WSTUNNEL_SOCKS5_PORT
+            localPort = WSTUNNEL_SOCKS5_PORT,
+            // The UI config is built for the UDP mode, where a pool buys
+            // nothing, so it carries wstunnel's default of 0. Copying it
+            // unchanged would leave every SOCKS5 tunnel paying a full handshake.
+            connectionMinIdle = WstunnelConfig.DEFAULT_SOCKS5_MIN_IDLE
         )
     }
 
