@@ -565,13 +565,24 @@ class VpnStateMachineTest {
     }
 
     @Test
-    fun `PppAuthenticated can transition to ProxyAuthenticating`() = runTest {
+    fun `PppAuthenticated goes to VpnStarting, never straight to the portal`() = runTest {
         stateMachine.transition(VpnState.SstpConnecting)
         stateMachine.transition(VpnState.SstpConnected)
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.LCP))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
         stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
         stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+
+        // The captive portal lives inside the UCF network, which the device only
+        // joins through the SSTP tunnel. Reaching it before the TUN exists sent
+        // the request out over mobile data, where that address does not exist,
+        // so away from the campus the connection could never complete.
+        assertFalse(
+            "the portal must not be contacted before the tunnel is up",
+            stateMachine.transition(VpnState.ProxyAuthenticating)
+        )
+
+        assertTrue(stateMachine.transition(VpnState.VpnStarting))
         assertTrue(stateMachine.transition(VpnState.ProxyAuthenticating))
         assertEquals(VpnState.ProxyAuthenticating, stateMachine.state.value)
     }
