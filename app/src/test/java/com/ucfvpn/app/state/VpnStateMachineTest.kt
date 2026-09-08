@@ -385,23 +385,31 @@ class VpnStateMachineTest {
 
     @Test
     fun `State history is limited to 20 entries`() = runTest {
-        // Go through many transitions
-        stateMachine.transition(VpnState.SstpConnecting)
-        stateMachine.transition(VpnState.SstpConnected)
-        stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.LCP))
-        stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
-        stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
-        stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
-        stateMachine.transition(VpnState.VpnStarting)
-        stateMachine.transition(VpnState.ProxyAuthenticating)
-        stateMachine.transition(VpnState.ProxyAuthenticated)
-        stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
-        stateMachine.transition(VpnState.WstunnelRunning(1080))
-        stateMachine.transition(VpnState.VpnRunning)
+        // One full sequence is 12 transitions, which never reached the cap: the
+        // test asserted an exact count and so never exercised the limit it is
+        // named after. Three passes take it well past 20.
+        repeat(3) {
+            stateMachine.transition(VpnState.SstpConnecting)
+            stateMachine.transition(VpnState.SstpConnected)
+            stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.LCP))
+            stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.AUTH))
+            stateMachine.transition(VpnState.PppNegotiating(VpnState.PppPhase.IPCP))
+            stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2"))
+            stateMachine.transition(VpnState.VpnStarting)
+            stateMachine.transition(VpnState.ProxyAuthenticating)
+            stateMachine.transition(VpnState.ProxyAuthenticated)
+            stateMachine.transition(VpnState.WstunnelStarting(TunnelType.SOCKS5))
+            stateMachine.transition(VpnState.WstunnelRunning(1080))
+            stateMachine.transition(VpnState.VpnRunning)
+            stateMachine.transition(VpnState.Disconnected)
+        }
 
         val history = stateMachine.stateHistory.value
-        assertEquals(14, history.size)
-        assertTrue(history.size <= 20)
+        assertEquals("history must be capped, not merely short", 20, history.size)
+
+        // The cap keeps the MOST RECENT entries: a history that dropped the tail
+        // instead would be useless for diagnosing a failure.
+        assertEquals(VpnState.Disconnected, history.last().to)
     }
 
     // ========== connect() and disconnect() Tests ==========
@@ -496,6 +504,9 @@ class VpnStateMachineTest {
 
         assertTrue(stateMachine.transition(VpnState.PppAuthenticated("10.0.0.2")))
         assertEquals(VpnState.PppAuthenticated("10.0.0.2"), stateMachine.state.value)
+
+        assertTrue(stateMachine.transition(VpnState.VpnStarting))
+        assertEquals(VpnState.VpnStarting, stateMachine.state.value)
 
         assertTrue(stateMachine.transition(VpnState.ProxyAuthenticating))
         assertEquals(VpnState.ProxyAuthenticating, stateMachine.state.value)
