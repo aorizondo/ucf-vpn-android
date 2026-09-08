@@ -13,7 +13,7 @@ import com.ucfvpn.app.state.ReconnectState
 import com.ucfvpn.app.state.VpnState
 import com.ucfvpn.app.state.VpnStateMachine
 import com.ucfvpn.app.prefs.ConfigPreferences
-import com.ucfvpn.app.vpn.VpnGatewayService
+import com.ucfvpn.app.vpn.VpnTunnelController
 import com.ucfvpn.app.wstunnel.TunnelType
 import com.ucfvpn.app.wstunnel.WstunnelConfig
 import com.ucfvpn.app.wstunnel.WstunnelManager
@@ -120,7 +120,8 @@ data class LogEntry(
  * ```
  *
  * @param context Android context for wstunnel binary extraction
- * @param vpnService VpnGatewayService instance for TUN interface management
+ * @param vpnService controller for the TUN interface; the concrete
+ *   implementation is VpnGatewayService
  * @param sstpTunnel SSTP tunnel implementation
  * @param proxyAuthService Proxy authentication service
  * @param wstunnelManager wstunnel process manager
@@ -134,7 +135,7 @@ class VpnOrchestrator(
     private val wstunnelManager: WstunnelManager,
     private val stateMachine: VpnStateMachine = VpnStateMachine(),
     reconnectManager: ReconnectManager? = null,
-    var vpnService: VpnGatewayService? = null
+    var vpnService: VpnTunnelController? = null
 ) {
     // ── Public API ────────────────────────────────────────────────
     // ─────────────────────────────────────────────────────────────
@@ -565,6 +566,7 @@ class VpnOrchestrator(
                     assignment.dns1.takeIf { it.isNotBlank() && it != UNSET_IP },
                     assignment.dns2.takeIf { it.isNotBlank() && it != UNSET_IP }
                 ),
+                mtu = com.ucfvpn.app.vpn.VpnConfig.DEFAULT.mtu,
                 bypassApps = appConfig.splitTunnelConfig.bypassApps
             )
             if (tunnelResult.isFailure) {
@@ -638,7 +640,8 @@ class VpnOrchestrator(
         emitLog("INFO", "VPN: Bridging Internet traffic to SOCKS5...")
         try {
             val bridgeResult = vpnService.startSocks5Bridge(
-                socks5Proxy = "127.0.0.1:$WSTUNNEL_SOCKS5_PORT"
+                socks5Proxy = "127.0.0.1:$WSTUNNEL_SOCKS5_PORT",
+                dnsViaSocks5 = true
             )
             if (bridgeResult.isFailure) {
                 throw bridgeResult.exceptionOrNull() ?: Exception("Unknown SOCKS5 bridge error")

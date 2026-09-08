@@ -7,6 +7,7 @@ import com.ucfvpn.app.sstp.client.SstpTunnel
 import com.ucfvpn.app.sstp.client.SstpTunnelCallbacks
 import com.ucfvpn.app.sstp.ppp.PppEvent
 import com.ucfvpn.app.state.VpnState
+import com.ucfvpn.app.vpn.VpnTunnelController
 import com.ucfvpn.app.state.VpnStateMachine
 import com.ucfvpn.app.wstunnel.WstunnelConfig
 import com.ucfvpn.app.wstunnel.WstunnelManager
@@ -47,12 +48,14 @@ class VpnOrchestratorTest {
     private lateinit var proxyAuthService: ProxyAuthService
     private lateinit var wstunnelManager: WstunnelManager
     private lateinit var stateMachine: VpnStateMachine
+    private lateinit var vpnController: FakeVpnTunnelController
 
     @Before
     fun setUp() {
         Dispatchers.setMain(dispatcher)
         sstpTunnel = FakeSstpTunnel()
         stateMachine = VpnStateMachine()
+        vpnController = FakeVpnTunnelController()
 
         proxyAuthService = mockk(relaxed = true)
         coEvery { proxyAuthService.login(any(), any()) } returns Result.success(Unit)
@@ -73,10 +76,12 @@ class VpnOrchestratorTest {
         proxyAuthService = proxyAuthService,
         wstunnelManager = wstunnelManager,
         stateMachine = stateMachine,
-        // No VpnGatewayService: it is an Android VpnService and cannot be
-        // instantiated on the JVM. Layer 5 therefore always fails here, which is
-        // exactly what lets us assert the error path of the final stage.
-        vpnService = null
+        // A fake controller, not null: the orchestrator now takes the
+        // VpnTunnelController interface rather than the Android service, so the
+        // success path of the final stage is reachable in a unit test for the
+        // first time. Passing null used to make every test exercise the "no
+        // service" error path instead.
+        vpnService = vpnController
     )
 
     private fun config(autoReconnect: Boolean = false) = AppConfig(
@@ -91,16 +96,67 @@ class VpnOrchestratorTest {
     // ── Connection sequence ───────────────────────────────────────
 
     @Test
-    fun `sequence walks SSTP, PPP, proxy and wstunnel before the VPN layer`() = runTest {
+    fun `the tunnel is up before the portal and wstunnel are contacted`() = runTest {
+        // Order is the whole point. The SSTP link is what places the device
+        // inside the UCF network, so away from the campus the captive portal and
+        // the HTTP proxy are reachable only through the tunnel. Establishing it
+        // last, as this used to, sent both out over mobile data where those
+        // addresses do not exist.
         val orchestrator = orchestrator()
 
         orchestrator.start(config())
         advanceUntilIdle()
 
         assertEquals("SSTP must be connected exactly once", 1, sstpTunnel.connectCalls)
+        assertEquals("the tunnel must be established once", 1, vpnController.establishCalls)
         coVerify(exactly = 1) { proxyAuthService.login("puser", "ppass") }
         coVerify(exactly = 1) { wstunnelManager.start(any()) }
         coVerify(exactly = 1) { wstunnelManager.waitForSocks5Ready(any(), any()) }
+
+        // The bridge comes last: it needs wstunnel already listening.
+        assertEquals(listOf("establish", "bridge"), vpnController.calls)
+    }
+
+    @Test
+    fun `the TUN carries the address and resolvers PPP assigned`() = runTest {
+        // Hardcoded values would break silently off campus: packets would leave
+        // the tunnel with a source the UCF network does not know, so replies
+        // never come back, and public resolvers do not answer internal names.
+        val orchestrator = orchestrator()
+
+        orchestrator.start(config())
+        advanceUntilIdle()
+
+        assertEquals("10.0.0.2", vpnController.lastLocalAddress)
+        assertEquals(listOf("8.8.8.8", "8.8.4.4"), vpnController.lastDnsServers)
+    }
+
+    @Test
+    fun `the configured private networks reach the tunnel`() = runTest {
+        val orchestrator = orchestrator()
+
+        orchestrator.start(
+            config().copy(
+                splitTunnelConfig = SplitTunnelConfig(privateNetworks = listOf("10.14.0.0/16"))
+            )
+        )
+        advanceUntilIdle()
+
+        assertEquals(listOf("10.14.0.0/16"), vpnController.lastPrivateNetworks)
+    }
+
+    @Test
+    fun `a failed tunnel stops the sequence before the portal`() = runTest {
+        vpnController.establishFailure = IllegalStateException("no TUN")
+        val orchestrator = orchestrator()
+
+        orchestrator.start(config())
+        advanceUntilIdle()
+
+        // Contacting the portal without a tunnel would just time out against an
+        // address that does not exist from here.
+        coVerify(exactly = 0) { proxyAuthService.login(any(), any()) }
+        assertEquals("the bridge must not be attempted", 0, vpnController.bridgeCalls)
     }
 
     @Test
@@ -209,13 +265,27 @@ class VpnOrchestratorTest {
     }
 
     @Test
-    fun `VPN layer failure is reported when no service is bound`() = runTest {
+    fun `the full sequence reaches VpnRunning`() = runTest {
+        // The happy path had never been asserted: with a null service every test
+        // stopped at the "no service" error, so nothing checked that the six
+        // layers actually compose into a connected tunnel.
         val orchestrator = orchestrator()
 
         orchestrator.start(config())
         advanceUntilIdle()
 
-        // vpnService is null, so the last stage cannot succeed.
+        assertEquals(VpnState.VpnRunning, stateMachine.state.value)
+        assertTrue("the orchestrator must consider itself running", orchestrator.isRunning())
+        assertEquals(1, vpnController.bridgeCalls)
+    }
+
+    @Test
+    fun `the VPN layer reports failure when no controller is wired`() = runTest {
+        val orchestrator = orchestrator().apply { vpnService = null }
+
+        orchestrator.start(config())
+        advanceUntilIdle()
+
         assertTrue(
             "expected an error state, was ${stateMachine.state.value}",
             stateMachine.state.value.isError || stateMachine.state.value == VpnState.Disconnected
@@ -238,6 +308,7 @@ class VpnOrchestratorTest {
 
         coVerify { wstunnelManager.stop() }
         coVerify { proxyAuthService.reset() }
+        assertTrue("the VPN side must be shut down", vpnController.shutdownCalls > 0)
         assertEquals("SSTP must be disconnected", 1, sstpTunnel.disconnectCalls)
         assertFalse(orchestrator.isRunning())
         assertEquals(VpnState.Disconnected, stateMachine.state.value)
@@ -252,6 +323,62 @@ class VpnOrchestratorTest {
 
         assertFalse(orchestrator.isRunning())
         coVerify(exactly = 0) { wstunnelManager.stop() }
+    }
+
+    /**
+     * Records what the orchestrator asks of the VPN side.
+     *
+     * The interface exists precisely so this is possible: [com.ucfvpn.app.vpn.VpnGatewayService]
+     * is an Android `VpnService` and cannot be constructed on the JVM.
+     */
+    private class FakeVpnTunnelController : VpnTunnelController {
+        override var sendToSstp: ((ByteArray) -> Unit)? = null
+
+        var establishCalls = 0
+        var bridgeCalls = 0
+        var shutdownCalls = 0
+        var lastLocalAddress: String? = null
+        var lastDnsServers: List<String> = emptyList()
+        var lastPrivateNetworks: List<String> = emptyList()
+
+        /** When set, [establishSplitTunnel] fails with it. */
+        var establishFailure: Throwable? = null
+
+        /** Order in which the orchestrator drove the VPN side. */
+        val calls = mutableListOf<String>()
+
+        override fun protectSocket(socket: java.net.Socket): Boolean = true
+
+        override fun onPacketFromSstp(packet: ByteArray) = Unit
+
+        override suspend fun establishSplitTunnel(
+            privateNetworks: List<String>,
+            localAddress: String,
+            dnsServers: List<String>,
+            mtu: Int,
+            bypassApps: List<String>
+        ): Result<Unit> {
+            establishCalls++
+            calls.add("establish")
+            lastLocalAddress = localAddress
+            lastDnsServers = dnsServers
+            lastPrivateNetworks = privateNetworks
+            return establishFailure?.let { Result.failure(it) } ?: Result.success(Unit)
+        }
+
+        override suspend fun startSocks5Bridge(
+            socks5Proxy: String,
+            dnsViaSocks5: Boolean
+        ): Result<Unit> {
+            bridgeCalls++
+            calls.add("bridge")
+            return Result.success(Unit)
+        }
+
+        override suspend fun shutdown() {
+            shutdownCalls++
+            calls.add("shutdown")
+        }
     }
 
     /**

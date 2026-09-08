@@ -53,7 +53,7 @@ import java.io.FileDescriptor
  * - [onRevoke] is called when the user manually disconnects or the system kills the VPN
  * - [shutdown] should be called when all components need to be cleanly stopped
  */
-class VpnGatewayService : VpnService() {
+class VpnGatewayService : VpnService(), VpnTunnelController {
 
     companion object {
         private const val NOTIFICATION_CHANNEL_ID = "ucf_vpn_channel"
@@ -142,7 +142,7 @@ class VpnGatewayService : VpnService() {
      * 2. Close TUN interface
      * 3. Stop the service
      */
-    suspend fun shutdown() {
+    override suspend fun shutdown() {
         Timber.tag(TAG).d("Shutting down VPN components...")
 
         // Order matters, and this used to be wrong: the cleanup ran in a
@@ -355,7 +355,7 @@ class VpnGatewayService : VpnService() {
      * @param socket The socket to protect from VPN routing
      * @return true if protection was applied, false otherwise
      */
-    fun protectSocket(socket: java.net.Socket): Boolean {
+    override fun protectSocket(socket: java.net.Socket): Boolean {
         return protect(socket)
     }
 
@@ -388,7 +388,7 @@ class VpnGatewayService : VpnService() {
      * the tunnel is up; without it internal traffic has nowhere to go, so the
      * split tunnel refuses to start.
      */
-    var sendToSstp: ((ByteArray) -> Unit)? = null
+    override var sendToSstp: ((ByteArray) -> Unit)? = null
 
     /**
      * Starts the VPN tunnel with hev-socks5-tunnel (Phase 2: socks5+VPN).
@@ -481,12 +481,12 @@ class VpnGatewayService : VpnService() {
      *   against public ones
      * @param bypassApps packages excluded from the VPN
      */
-    suspend fun establishSplitTunnel(
-        privateNetworks: List<String> = listOf("10.0.0.0/8", "192.168.0.0/16", "172.16.0.0/12"),
+    override suspend fun establishSplitTunnel(
+        privateNetworks: List<String>,
         localAddress: String,
         dnsServers: List<String>,
-        mtu: Int = VpnConfig.DEFAULT.mtu,
-        bypassApps: List<String> = emptyList()
+        mtu: Int,
+        bypassApps: List<String>
     ): Result<Unit> {
         Timber.tag(TAG).d("Establishing split tunnel (ip=%s dns=%s)", localAddress, dnsServers)
 
@@ -568,9 +568,9 @@ class VpnGatewayService : VpnService() {
      * @param socks5Proxy local SOCKS5 endpoint in `host:port` form
      * @param dnsViaSocks5 resolve DNS over TCP through the proxy
      */
-    suspend fun startSocks5Bridge(
-        socks5Proxy: String = "127.0.0.1:1080",
-        dnsViaSocks5: Boolean = true
+    override suspend fun startSocks5Bridge(
+        socks5Proxy: String,
+        dnsViaSocks5: Boolean
     ): Result<Unit> {
         val hevSide = socks5PendingHevSide
         if (hevSide == null) {
@@ -629,7 +629,7 @@ class VpnGatewayService : VpnService() {
      * app that opened the connection sees the reply. Wired by the orchestrator
      * to `SstpTunnel.onIpPacket`.
      */
-    fun onPacketFromSstp(packet: ByteArray) {
+    override fun onPacketFromSstp(packet: ByteArray) {
         dataPath?.onPacketFromSstp(packet)
     }
 
